@@ -14,7 +14,8 @@
     "ses_20ca8f404ffeEWPEbb6PBlsizM",
     "ses_20ca737d3ffeME65VOf4KNiaUg",
     "ses_20ca5a4a9ffea3105nsf1Do1pL",
-    "ses_20ca47e9dffeG47OrIlrXzWonV"
+    "ses_20ca47e9dffeG47OrIlrXzWonV",
+    "ses_20ca2803fffe1xP9shq1eZGw51"
   ],
   "plan_name": "repo-cleanup-continuation",
   "agent": "atlas",
@@ -126,6 +127,15 @@
       "agent": "Sisyphus-Junior",
       "category": "unspecified-low",
       "updated_at": "2026-05-04T14:20:55.074Z"
+    },
+    "todo:13": {
+      "task_key": "todo:13",
+      "task_label": "13",
+      "task_title": "Prepare the atomic commit sequence and staging boundaries",
+      "session_id": "ses_20ca2803fffe1xP9shq1eZGw51",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-05-04T14:24:35.084Z"
     }
   }
 }
