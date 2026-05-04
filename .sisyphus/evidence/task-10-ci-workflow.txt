@@ -1,0 +1,33 @@
+CI workflow created: .github/workflows/smoke.yml
+
+File path: .github/workflows/smoke.yml
+Workflow name: Smoke Checks
+
+Triggers:
+  - push to main, master
+  - pull_request to main, master
+
+Jobs:
+  1. frontend-smoke
+     - Runner: ubuntu-latest
+     - Node: 18
+     - Steps: checkout → setup-node → npm ci → npm run build
+     - Working directory: codex-frontend/
+     - Must pass (no continue-on-error)
+
+  2. frontend-lint
+     - Runner: ubuntu-latest
+     - Node: 18
+     - Steps: checkout → setup-node → npm ci → npm run lint
+     - Working directory: codex-frontend/
+     - continue-on-error: true (pre-existing lint errors tolerated)
+
+  3. backend-import
+     - Runner: ubuntu-latest
+     - Python: 3.10
+     - Steps: checkout → setup-python → pip install -r requirements.txt → import check
+     - Working directory: frontend_integration_fix/frontend_integration/
+     - Import check: python -c "from codex_model import CodexClassifier; print('import ok')"
+     - No model weights required for import check
+
+Created: 2026-05-04

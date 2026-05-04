@@ -1,0 +1,8 @@
+The following patterns are confirmed to be ignored in the repository:
+- node_modules/ (ignored by codex-frontend/.gitignore:10)
+- dist/ (ignored by codex-frontend/.gitignore:11 and .gitignore:18)
+- __pycache__/ (ignored by .gitignore:11)
+- *.pyc (ignored by .gitignore:12)
+- .DS_Store (ignored by .gitignore:1)
+- *.pt (ignored by .gitignore:62)
+- .env (ignored by .gitignore:28)

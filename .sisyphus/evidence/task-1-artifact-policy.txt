@@ -1,0 +1,40 @@
+# Artifact Retention Policy — Codex Glyph Analyzer
+
+## Scope
+
+This policy covers model weights, sample glyph/element data, and PDF assets discovered while classifying the repository root.
+
+## 1) Model weights (`*.pt`)
+
+- **Current policy:** `keep-for-now`.
+- **Why:** User direction says these should be treated as external assets, while preserving a path for model updates from user feedback.
+- **In-repo examples found:**
+  - `frontend_integration_fix/frontend_integration/codex_model/weights/prototypes.pt`
+  - `frontend_integration_fix/frontend_integration/codex_model/weights/projection.pt`
+  - `frontend_integration_fix/frontend_integration/prototypes/prototypes.pt`
+  - `frontend_integration_fix/frontend_integration/mobile_sam.pt`
+- **Retention direction:** Move toward an external-asset policy (artifact storage, release asset, or documented download/source-of-truth location) instead of treating weights as ordinary source files.
+- **Important assumption:** Until that external policy exists, do **not** delete or relocate working weight files that the backend/AI integration bundle depends on.
+- **Immediate cleanup rule:** remove only noise sidecars such as `._*.pt`; keep real model weights for now.
+
+## 2) Sample glyph / element data
+
+- **Current policy:** `keep-for-now` when bundled inside `frontend_integration_fix/frontend_integration/data/`; `archive` when it is purely experimental output such as `sam_glyph_test/`.
+- **Why:** Sample inputs are useful for smoke tests, backend/API demos, and validation of the model integration package, but they are not yet proven to be canonical production assets.
+- **Retention direction:**
+  - Keep compact, documented sample datasets that are needed for demos/tests.
+  - Archive bulky or one-off experimental outputs outside the canonical repo once a stable smoke-test fixture set is defined.
+  - Remove derived caches/noise (`__pycache__/`, `.DS_Store`, `__MACOSX/`) immediately when cleanup execution is authorized.
+
+## 3) PDF assets
+
+- **Current policy:** remove unless explicitly required for the shipped product or preserved in an external documentation/archive location.
+- **Why:** The root PDF found here (`presentation_codex.pdf`) is presentation material, not executable code, configuration, or a required runtime/test asset. The user explicitly allowed removal if non-essential.
+- **Retention direction:** Store presentations externally (docs archive, shared drive, release note attachment) rather than in the canonical source root.
+
+## Decision summary
+
+- Real model weights: **keep-for-now** pending external asset management.
+- Sample demo/test data: **keep-for-now** if actively useful and documented; otherwise **archive** if it is historical/experimental output.
+- PDF presentations/docs in the repo root: **remove** unless they are proven essential.
+- Noise artifacts (`__MACOSX`, `.DS_Store`, `__pycache__`, `._*`): **remove**.

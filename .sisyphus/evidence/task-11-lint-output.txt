@@ -1,0 +1,24 @@
+TASK-11 FRONTEND LINT OUTPUT
+Date: 2026-05-04
+Command: node node_modules/eslint/bin/eslint.js src --ext .ts,.tsx
+Working directory: /home/sina/omxpro/clinic-codex/codex-frontend
+
+--- OUTPUT ---
+/home/sina/omxpro/clinic-codex/codex-frontend/src/pages/AnnotationPage.tsx
+  22:5  error  Avoid calling setState() directly within an effect  react-hooks/set-state-in-effect
+
+/home/sina/omxpro/clinic-codex/codex-frontend/src/pages/DetailPage.tsx
+  16:7   error    Avoid calling setState() directly within an effect  react-hooks/set-state-in-effect
+  71:16  warning  The ref value 'imageRef.current' will likely have changed by the time this effect cleanup function runs.  react-hooks/exhaustive-deps
+
+✖ 3 problems (2 errors, 1 warning)
+
+--- EXIT CODE ---
+1
+
+--- VERDICT ---
+EXPECTED (PRE-EXISTING): All 3 issues (2 errors, 1 warning) match the known pre-existing baseline:
+  - AnnotationPage.tsx: react-hooks/set-state-in-effect (pre-existing)
+  - DetailPage.tsx: react-hooks/set-state-in-effect (pre-existing)
+  - DetailPage.tsx: react-hooks/exhaustive-deps warning (pre-existing)
+No new lint errors introduced by repo cleanup.

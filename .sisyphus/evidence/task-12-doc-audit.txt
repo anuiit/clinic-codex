@@ -1,0 +1,64 @@
+Task 12 — Documentation Audit
+Generated: 2026-05-04
+Auditor: Sisyphus-Junior
+
+=== AUDIT TABLE ===
+
+DOC                                                          | REFERENCE                                                                                  | EXISTS? | ACTION
+-------------------------------------------------------------|--------------------------------------------------------------------------------------------|---------|-------
+README.md                                                    | codex-frontend/                                                                            | PASS    | none
+README.md                                                    | frontend_integration_fix/frontend_integration/                                             | PASS    | none
+README.md                                                    | frontend_integration_fix/frontend_integration/requirements.txt                             | PASS    | none
+README.md                                                    | examples/flask_api.py (relative to integration dir)                                        | PASS    | none
+README.md                                                    | frontend_integration_fix/frontend_integration/data/glyphs_sample/atl-glyph/026r_a_07-2.jpg| PASS    | none
+README.md                                                    | codex_model/weights/prototypes.pt (relative to integration dir)                            | PASS    | none
+README.md                                                    | codex_model/weights/projection.pt (relative to integration dir)                            | PASS    | none
+README.md                                                    | prototypes/prototypes.pt (relative to integration dir)                                     | PASS    | none
+README.md                                                    | mobile_sam.pt (relative to integration dir)                                                | PASS    | none
+README.md                                                    | codex-frontend/README.md (link)                                                            | PASS    | none
+README.md                                                    | frontend_integration_fix/frontend_integration/README.md (link)                             | PASS    | none
+codex-frontend/README.md                                     | frontend_integration_fix/frontend_integration/examples/flask_api.py                        | PASS    | none
+codex-frontend/README.md                                     | dist/ (build output dir)                                                                   | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | codex_model/classifier.py                                                                  | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | codex_model/config.json                                                                    | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | codex_model/weights/ (dir)                                                                 | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | codex_pipeline/ (dir)                                                                      | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | codex_pipeline/config/default.yaml                                                         | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | prototypes/prototypes.pt                                                                   | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | data/glyphs_sample/ (dir)                                                                  | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | data/elements_sample/ (dir)                                                                | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | examples/classify_single.py                                                                | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | examples/classify_batch.py                                                                 | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | examples/flask_api.py                                                                      | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | examples/segment_glyph.py                                                                  | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | examples/infer_glyph.py                                                                    | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | examples/test_sam_on_glyphs.py                                                             | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | examples/sample_outputs/ (dir)                                                             | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | requirements.txt                                                                           | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | default.yaml                                                                               | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | data/elements_sample/0015-cacahuatl/03_04_22-27.bmp                                       | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | data/glyphs_sample/atl-glyph/026r_a_07-2.jpg                                              | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | mobile_sam.pt                                                                              | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | codex_model/weights/prototypes.pt                                                          | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | codex_model/weights/projection.pt                                                          | PASS    | none
+frontend_integration_fix/frontend_integration/README.md      | prototypes/prototypes.pt                                                                   | PASS    | none
+.github/workflows/smoke.yml                                  | codex-frontend/ (working-directory)                                                        | PASS    | none
+.github/workflows/smoke.yml                                  | codex-frontend/package-lock.json (cache-dependency-path)                                   | PASS    | none
+.github/workflows/smoke.yml                                  | frontend_integration_fix/frontend_integration (working-directory)                          | PASS    | none
+.github/workflows/smoke.yml                                  | requirements.txt (relative to working-directory)                                           | PASS    | none
+
+=== SUMMARY ===
+
+Total references checked: 40
+PASS: 40
+FAIL: 0
+Fixed: 0
+
+All documentation references are accurate and consistent with the current repository state.
+No broken references found. No fixes required.
+
+=== NOTES ===
+- sam_glyph_test/ was moved to _archive/sam_glyph_test/ in T8, but NO doc references it — clean.
+- presentation_codex.pdf was deleted — NO doc references it — clean.
+- Root package-lock.json was deleted — NOT referenced in any doc — clean.
+- codex-frontend/package-lock.json exists and is correctly referenced in smoke.yml.

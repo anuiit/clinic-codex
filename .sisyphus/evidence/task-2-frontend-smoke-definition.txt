@@ -1,0 +1,31 @@
+# Frontend smoke-check baseline for codex-frontend
+
+Workspace path: codex-frontend/
+
+1) Install dependencies
+   Command: npm ci
+   Workdir: codex-frontend/
+   Expected exit code: 0
+   Notes: Use npm ci for deterministic install. Falls back to `npm install` if lockfile missing.
+
+2) Build
+   Command: npm run build
+   Workdir: codex-frontend/
+   Expected exit code: 0
+   Notes: package.json defines "build": "tsc -b && vite build" — TypeScript compile and Vite production build.
+
+3) Lint
+   Command: npm run lint
+   Workdir: codex-frontend/
+   Expected exit code: 0
+   Notes: package.json defines "lint": "eslint .". Lint run must exit 0 (no lint errors). Use CI ESLint configuration in repo.
+
+Automation tips (concrete):
+ - Run commands sequentially in the repository root or CI job, e.g.:
+     cd codex-frontend && npm ci && npm run build && npm run lint
+ - All commands must exit 0 for the frontend smoke to pass.
+
+Success criteria:
+ - npm ci returns 0 and installs dependencies
+ - npm run build returns 0 and produces a dist/ (vite) build
+ - npm run lint returns 0 and prints no errors

@@ -1,0 +1,44 @@
+# Backend smoke-check baseline for frontend_integration_fix/frontend_integration
+
+Workspace path: frontend_integration_fix/frontend_integration/
+
+1) Python environment
+   Expectation: A Python 3.8+ environment with dependencies from requirements.txt installed.
+   Command (informational): pip install -r requirements.txt
+   Workdir: frontend_integration_fix/frontend_integration/
+   Expected exit code: 0
+
+2) Start Flask API (demo entrypoint)
+   Command: python examples/flask_api.py
+   Workdir: frontend_integration_fix/frontend_integration/
+   Expected behaviour: Server prints startup messages and binds to http://0.0.0.0:5000 and process remains running.
+   Expected exit code: 0 for the initial process start (process stays alive). Do NOT run in smoke-check automation as a blocking step; instead start in background or test via a health curl.
+
+3) Sample glyph path (use this exact file)
+   Path: frontend_integration_fix/frontend_integration/data/glyphs_sample/atl-glyph/026r_a_07-2.jpg
+
+4) Curl request to /segment (automatable example)
+   Command (from repository root):
+     curl -s -X POST -F "image=@frontend_integration_fix/frontend_integration/data/glyphs_sample/atl-glyph/026r_a_07-2.jpg" http://localhost:5000/segment
+
+   Expected HTTP behaviour:
+   - HTTP status: 200
+   - Response Content-Type: application/json
+   - JSON shape: object containing at minimum the keys: "num_elements", "image_size", "elements"
+   - "num_elements" must be an integer >= 0
+   - "elements" must be a list/array (may be empty)
+
+5) Concrete automated check (exit codes / assertions)
+   - Start server in background (ex: python examples/flask_api.py &), wait up to 10s for port 5000 to accept connections.
+   - Run the curl command above and capture response body and HTTP status.
+   - Pass conditions:
+       * curl returns exit code 0 (request performed)
+       * HTTP status is 200
+       * Response parses as JSON
+       * Parsed JSON is an object and contains keys: "num_elements", "image_size", "elements"
+       * "elements" is an array (JSON list)
+   - If all pass, backend smoke-check considered SUCCESS.
+
+Notes and constraints:
+ - The /segment endpoint uses MobileSAM checkpoint at ~/.cache/mobile_sam/mobile_sam.pt; if missing, segment may fail at runtime — this remains an external artifact and is an acceptable precondition for the smoke baseline.
+ - The flask_api.py entrypoint binds to 0.0.0.0:5000 by default and must be reachable at http://localhost:5000 in CI/local smoke checks.
