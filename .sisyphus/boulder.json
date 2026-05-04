@@ -15,7 +15,11 @@
     "ses_20ca737d3ffeME65VOf4KNiaUg",
     "ses_20ca5a4a9ffea3105nsf1Do1pL",
     "ses_20ca47e9dffeG47OrIlrXzWonV",
-    "ses_20ca2803fffe1xP9shq1eZGw51"
+    "ses_20ca2803fffe1xP9shq1eZGw51",
+    "ses_20c9e931dffe6cuXGAaWH83R22",
+    "ses_20c9ebd4bffeUyhcliJ4APNpgv",
+    "ses_20c9e6ed1ffeD7HDlVc0ZPJEMC",
+    "ses_20c9e6e04ffeNRdZbUwLXjZBsz"
   ],
   "plan_name": "repo-cleanup-continuation",
   "agent": "atlas",
@@ -136,6 +140,15 @@
       "agent": "Sisyphus-Junior",
       "category": "unspecified-high",
       "updated_at": "2026-05-04T14:24:35.084Z"
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "**Plan Compliance Audit** — `oracle`",
+      "session_id": "ses_20c9e6e04ffeNRdZbUwLXjZBsz",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-05-04T14:32:08.104Z"
     }
   }
 }
