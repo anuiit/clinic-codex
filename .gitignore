@@ -1,0 +1,67 @@
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+__MACOSX/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+*.local
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Misc
+*.log
+.env.local
+.env.*.local
+*.pt
+
+# Preserve canonical source roots
+!codex-frontend/
+!frontend_integration_fix/frontend_integration/
+!frontend_integration_fix/frontend_integration/data/
