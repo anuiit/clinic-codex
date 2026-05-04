@@ -1012,19 +1012,19 @@ Max Concurrent: 6
 
 > 4 review agents run in PARALLEL. ALL must APPROVE. Present consolidated results to user and get explicit "okay" before completing.
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
+- [x] F1. **Plan Compliance Audit** — `oracle`
   Read the plan end-to-end. Verify the canonical tree, docs, ignore rules, env config, smoke checks, CI workflow, and cleanup outputs all exist and match the plan. Confirm evidence files exist in `.sisyphus/evidence/`.
   Output: `Must Have [N/N] | Must NOT Have [N/N] | Tasks [N/N] | VERDICT: APPROVE/REJECT`
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
+- [x] F2. **Code Quality Review** — `unspecified-high`
   Run relevant lint/build/smoke commands and review changed files for accidental feature creep, bad ignore rules, placeholder docs, or unsafe cleanup changes.
   Output: `Build [PASS/FAIL] | Lint [PASS/FAIL] | Smoke [PASS/FAIL] | Files [N clean/N issues] | VERDICT`
 
-- [ ] F3. **Real Manual QA** — `unspecified-high`
+- [x] F3. **Real Manual QA** — `unspecified-high`
   Execute every smoke scenario from the tasks, including README commands and backend/frontend baseline checks. Save evidence under `.sisyphus/evidence/final-qa/`.
   Output: `Scenarios [N/N pass] | Integration [N/N] | Edge Cases [N tested] | VERDICT`
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F4. **Scope Fidelity Check** — `deep`
   Compare each task’s scope against actual diff/content. Reject if cleanup drifted into feature work, deployment work, or undocumented structure changes.
   Output: `Tasks [N/N compliant] | Contamination [CLEAN/N issues] | Unaccounted [CLEAN/N files] | VERDICT`
 
