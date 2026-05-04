@@ -12,6 +12,11 @@ import {
   Search,
   Trash2,
   Upload,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
 } from 'lucide-react';
 import { segmentGlyph } from '../services/api';
 import { deleteAnalysis, getHistory, saveAnalysis } from '../services/storage';
@@ -107,6 +112,9 @@ export default function WorkspacePage() {
   const [expandedItems, setExpandedItems] = useState<Record<number, boolean>>({});
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [historyOpen, setHistoryOpen] = useState(() => !resolveCurrentRecord(getHistory(), initialPreferredId));
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('all');
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -120,13 +128,23 @@ export default function WorkspacePage() {
     setExpandedItems({});
     setHoveredIdx(null);
     setFocusedIdx(null);
+    if (zoom !== 1) {
+      setZoom(1);
+    }
+    if (panOffset.x !== 0 || panOffset.y !== 0) {
+      setPanOffset({ x: 0, y: 0 });
+    }
     setOverlayMode('all');
-  }, []);
+  }, [panOffset.x, panOffset.y, zoom]);
 
   const selectRecord = useCallback((record: AnalysisRecord | null) => {
     resetInspectionState();
     setCurrentRecord(record);
-  }, [resetInspectionState]);
+    const nextHistoryOpen = !record;
+    if (historyOpen !== nextHistoryOpen) {
+      setHistoryOpen(nextHistoryOpen);
+    }
+  }, [historyOpen, resetInspectionState]);
 
   const syncRecords = useCallback((preferredId?: string | null) => {
     const nextRecords = getHistory();
@@ -310,72 +328,64 @@ export default function WorkspacePage() {
     setExpandedItems((previous) => ({ ...previous, [idx]: !previous[idx] }));
   };
 
-  const goToAnnotation = () => {
-    if (currentRecord) {
-      navigate(`/annotate/${currentRecord.id}`);
+  const getElementIndexFromCanvasPoint = useCallback((offsetX: number, offsetY: number) => {
+    if (!currentRecord || !imageRef.current) {
+      return null;
     }
+
+    const { width: renderedWidth, height: renderedHeight } = imageRef.current.getBoundingClientRect();
+    const [origW, origH] = currentRecord.result.image_size;
+
+    if (!renderedWidth || !renderedHeight || !origW || !origH) {
+      return null;
+    }
+
+    const imageX = offsetX / (renderedWidth / origW);
+    const imageY = offsetY / (renderedHeight / origH);
+    let matchedIdx: number | null = null;
+
+    currentRecord.result.elements.forEach((element, idx) => {
+      const [x, y, w, h] = element.bbox;
+      if (imageX >= x && imageX <= x + w && imageY >= y && imageY <= y + h) {
+        matchedIdx = idx;
+      }
+    });
+
+    return matchedIdx;
+  }, [currentRecord]);
+
+  const handleEditorHandoff = () => {
+    if (!currentRecord) {
+      return;
+    }
+
+    navigate(
+      focusedIdx !== null
+        ? `/annotate/${currentRecord.id}?element=${focusedIdx}`
+        : `/annotate/${currentRecord.id}`,
+    );
   };
 
   return (
     <div className="space-y-6">
-      <section className="overflow-hidden rounded-[28px] border border-amber-500/15 bg-[radial-gradient(circle_at_top_left,_rgba(245,158,11,0.22),_transparent_38%),linear-gradient(135deg,rgba(28,25,23,0.98),rgba(12,10,9,0.94))] shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
-        <div className="grid gap-6 px-5 py-5 lg:grid-cols-[1.05fr_0.95fr] lg:px-7 lg:py-7">
-          <div className="space-y-5">
-            <div className="space-y-3">
-              <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs uppercase tracking-[0.32em] text-amber-300">
-                <ImagePlus size={14} /> Unified analysis workspace
-              </div>
-              <div>
-                <h1 className="text-3xl font-semibold tracking-tight text-stone-50 sm:text-4xl">Upload, inspect, and reopen glyph analyses from one surface.</h1>
-                <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-300 sm:text-base">
-                  Keep the upload bench, analysis history, and current inspection canvas visible together so the analyst never has to hop across routes.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl border border-stone-800/80 bg-stone-950/60 px-4 py-4">
-                <div className="text-xs uppercase tracking-[0.24em] text-stone-500">Stored runs</div>
-                <div className="mt-2 text-3xl font-semibold text-stone-100">{records.length}</div>
-              </div>
-              <div className="rounded-2xl border border-stone-800/80 bg-stone-950/60 px-4 py-4">
-                <div className="text-xs uppercase tracking-[0.24em] text-stone-500">Current file</div>
-                <div className="mt-2 truncate text-base font-medium text-stone-100">{file?.name ?? currentRecord?.imageName ?? 'Nothing loaded'}</div>
-              </div>
-              <div className="rounded-2xl border border-stone-800/80 bg-stone-950/60 px-4 py-4">
-                <div className="text-xs uppercase tracking-[0.24em] text-stone-500">Selection</div>
-                <div className="mt-2 text-base font-medium text-stone-100">{currentRecord ? `${currentRecord.result.num_elements} proposals ready` : 'Choose a record'}</div>
-              </div>
-            </div>
-
-            {error && (
-              <div className="flex items-start gap-2 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-red-300">
-                <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                <span className="text-sm">{error}</span>
-              </div>
-            )}
-
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <button
-                type="button"
-                onClick={analyze}
-                disabled={!file || !preview || loading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 text-sm font-semibold text-stone-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {loading ? <><Loader2 size={18} className="animate-spin" /> Analyzing…</> : <>Analyze glyph</>}
-              </button>
-              <button
-                type="button"
-                onClick={() => inputRef.current?.click()}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-stone-700 bg-stone-900/80 px-5 py-3 text-sm font-medium text-stone-200 transition-colors hover:border-stone-500 hover:text-stone-50"
-              >
-                <Upload size={16} /> Choose another image
-              </button>
-            </div>
+      <section className="flex flex-col gap-3 rounded-2xl border border-stone-800 bg-stone-900/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3 px-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500 text-stone-950">
+            <ImagePlus size={18} />
           </div>
+          <span className="font-semibold tracking-tight text-stone-100">Codex Glyph Analyzer</span>
+        </div>
+
+        <div className="flex flex-1 items-center justify-end gap-3">
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg bg-red-400/10 px-3 py-1.5 text-xs text-red-300">
+              <AlertCircle size={14} className="shrink-0" />
+              <span className="max-w-[300px] truncate">{error}</span>
+            </div>
+          )}
 
           <div
-            className={`group relative overflow-hidden rounded-[24px] border-2 border-dashed p-4 transition-colors sm:p-5 ${dragging ? 'border-amber-400 bg-amber-400/10' : 'border-stone-700/80 bg-stone-950/60 hover:border-stone-500'}`}
+            className={`flex items-center gap-3 rounded-xl border border-dashed px-4 py-2 transition-colors ${dragging ? 'border-amber-400 bg-amber-400/10' : 'border-stone-700/80 bg-stone-950/60 hover:border-stone-500'}`}
             onDragOver={(event) => {
               event.preventDefault();
               setDragging(true);
@@ -383,6 +393,8 @@ export default function WorkspacePage() {
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
             onClick={() => inputRef.current?.click()}
+            role="button"
+            tabIndex={0}
           >
             <input
               ref={inputRef}
@@ -396,71 +408,109 @@ export default function WorkspacePage() {
                 }
               }}
             />
-
             {preview ? (
-              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-end">
-                <div className="overflow-hidden rounded-2xl border border-stone-800 bg-stone-950/80 p-2">
-                  <img src={preview} alt="Preview" className="max-h-72 w-full rounded-xl object-contain" />
+              <div className="flex items-center gap-3">
+                <img src={preview} alt="Preview" className="h-8 w-8 rounded object-cover" />
+                <div className="flex flex-col">
+                  <span className="max-w-[120px] truncate text-xs font-medium text-stone-100">{file?.name}</span>
                 </div>
-                <div className="space-y-3 rounded-2xl border border-stone-800 bg-stone-950/80 p-4 text-sm text-stone-300">
-                  <div>
-                    <div className="text-xs uppercase tracking-[0.24em] text-stone-500">Queued upload</div>
-                    <div className="mt-2 truncate font-medium text-stone-100">{file?.name ?? 'Untitled image'}</div>
-                  </div>
-                  {file && <div className="text-stone-400">{(file.size / 1024).toFixed(0)} KB ready for segmentation</div>}
-                  <div className="rounded-xl border border-amber-400/15 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
-                    Run analysis to save this image directly into the left-hand history column.
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    analyze();
+                  }}
+                  disabled={loading}
+                  className="ml-2 inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 text-xs font-semibold text-stone-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+                >
+                  {loading ? <><Loader2 size={14} className="animate-spin" /> Analyzing…</> : <>Analyze</>}
+                </button>
               </div>
             ) : (
-              <div className="flex min-h-[260px] flex-col items-center justify-center gap-4 rounded-[20px] bg-stone-950/70 px-6 text-center">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/20 bg-amber-400/10 text-amber-300">
-                  <Upload size={28} />
-                </div>
-                <div>
-                  <p className="text-lg font-medium text-stone-100">Drop a codex glyph here</p>
-                  <p className="mt-2 text-sm text-stone-400">PNG, JPG, BMP supported. Click to browse or drag directly into the upload bench.</p>
-                </div>
+              <div className="flex items-center gap-2 text-sm text-stone-400">
+                <Upload size={16} />
+                <span>Drop a glyph image here (PNG, JPG, BMP) or click to browse</span>
               </div>
             )}
           </div>
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <aside className="rounded-[28px] border border-stone-800 bg-stone-900/80 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.18)] sm:p-5">
-          <div className="mb-4 flex items-start justify-between gap-3 border-b border-stone-800 pb-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-stone-500">Analysis history</p>
-              <h2 className="mt-1 text-lg font-semibold text-stone-100">Reopen saved runs</h2>
-            </div>
-            <div className="rounded-xl border border-stone-800 bg-stone-950/70 px-3 py-2 text-right">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-stone-500">Visible</div>
-              <div className="text-lg font-semibold text-stone-100">{filteredRecords.length}</div>
-            </div>
-          </div>
+      <div className={`grid gap-6 transition-all duration-300 ${historyOpen ? 'xl:grid-cols-[340px_minmax(0,1fr)]' : 'xl:grid-cols-[64px_minmax(0,1fr)]'}`}>
+        <aside className={`flex flex-col transition-all duration-300 ${historyOpen ? 'rounded-[28px] border border-stone-800 bg-stone-900/80 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.18)] sm:p-5' : 'items-center rounded-[24px] border border-stone-800 bg-stone-900/80 py-4 shadow-sm'}`}>
+              {!historyOpen ? (
+                <>
+                  <div className="relative flex flex-col items-center">
+                    <button
+                      type="button"
+                      onClick={() => setHistoryOpen(true)}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-950 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100"
+                      title="Expand history"
+                    >
+                      <PanelLeftOpen size={18} />
+                    </button>
 
-          <div className="relative mb-4">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
-            <input
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-              placeholder="Filter by glyph or class"
-              className="w-full rounded-xl border border-stone-700 bg-stone-950 px-10 py-2.5 text-sm text-stone-100 outline-none transition-colors focus:border-amber-400"
-            />
-          </div>
+                    {/* subtle count badge for collapsed rail */}
+                    <div className="mt-2">
+                      <span className="inline-flex items-center justify-center rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-stone-950">{records.length}</span>
+                    </div>
+                  </div>
 
-          <div className="space-y-3 overflow-y-auto pr-1 xl:max-h-[calc(100vh-18rem)]">
-            {records.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-stone-700 bg-stone-950/70 px-4 py-8 text-center text-sm text-stone-500">
-                No analyses yet. Upload a glyph above to seed this workspace.
+                  <div className="my-4 h-px w-6 bg-stone-800" />
+                  <div className="text-[10px] uppercase tracking-widest text-stone-500" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>
+                    History
+                  </div>
+
+                  {currentRecord && (
+                    <div className="mt-4 flex flex-1 flex-col items-center gap-2">
+                      <div className="h-px w-6 bg-stone-800" />
+                      <img src={currentRecord.imageDataUrl} alt="Current" className="mt-2 h-8 w-8 rounded-lg border border-amber-500/50 object-cover opacity-80 shadow-[0_0_0_1px_rgba(245,158,11,0.25)]" title={currentRecord.imageName} />
+                    </div>
+                  )}
+                </>
+              ) : (
+            <>
+              <div className="mb-4 flex items-start justify-between gap-3 border-b border-stone-800 pb-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-stone-500">Analysis history</p>
+                  <h2 className="mt-1 text-lg font-semibold text-stone-100">Saved runs</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="rounded-xl border border-stone-800 bg-stone-950/70 px-3 py-1.5 text-right">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500">Items</div>
+                    <div className="text-base font-semibold leading-tight text-stone-100">{filteredRecords.length}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen(false)}
+                    className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-950 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100"
+                    title="Collapse history"
+                  >
+                    <PanelLeftClose size={18} />
+                  </button>
+                </div>
               </div>
-            ) : filteredRecords.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-stone-700 bg-stone-950/70 px-4 py-8 text-center text-sm text-stone-500">
-                Nothing matches this filter.
+
+              <div className="relative mb-4">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
+                <input
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                  placeholder="Filter by glyph or class"
+                  className="w-full rounded-xl border border-stone-700 bg-stone-950 px-10 py-2.5 text-sm text-stone-100 outline-none transition-colors focus:border-amber-400"
+                />
               </div>
-            ) : (
+
+              <div className="space-y-3 overflow-y-auto pr-1 xl:max-h-[calc(100vh-14rem)]">
+                {records.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-stone-700 bg-stone-950/70 px-4 py-8 text-center text-sm text-stone-500">
+                    No analyses yet.
+                  </div>
+                ) : filteredRecords.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-stone-700 bg-stone-950/70 px-4 py-8 text-center text-sm text-stone-500">
+                    Nothing matches this filter.
+                  </div>
+                ) : (
               filteredRecords.map((record) => {
                 const isActive = currentRecord?.id === record.id;
                 const badges = [
@@ -524,35 +574,27 @@ export default function WorkspacePage() {
               })
             )}
           </div>
+            </>
+          )}
         </aside>
 
         <section className="space-y-6">
           {currentRecord ? (
             <>
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="rounded-2xl border border-stone-800 bg-stone-900/80 p-4">
-                  <div className="text-xs uppercase tracking-[0.24em] text-stone-500">Total elements</div>
-                  <div className="mt-2 text-3xl font-semibold text-stone-100">{stats?.total ?? 0}</div>
-                </div>
-                <div className="rounded-2xl border border-stone-800 bg-stone-900/80 p-4">
-                  <div className="text-xs uppercase tracking-[0.24em] text-stone-500">Rejected</div>
-                  <div className="mt-2 text-3xl font-semibold text-red-400">{stats?.rejectedCount ?? 0}</div>
-                </div>
-                <div className="rounded-2xl border border-stone-800 bg-stone-900/80 p-4">
-                  <div className="text-xs uppercase tracking-[0.24em] text-stone-500">Top predicted</div>
-                  <div className="mt-2 truncate text-2xl font-semibold text-amber-400">{stats?.topClass ?? 'None'}</div>
-                </div>
-              </div>
-
               <div className="grid gap-6 2xl:grid-cols-[minmax(0,1.04fr)_minmax(380px,0.96fr)]">
-                <section className="min-h-[420px] rounded-[28px] border border-stone-800 bg-stone-900/80 p-5 lg:p-6">
-                  <div className="flex flex-col gap-4 border-b border-stone-800 pb-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.24em] text-stone-500">Inspection workspace</p>
-                      <h2 className="mt-1 text-lg font-semibold text-stone-100">Image overlay</h2>
-                      <p className="mt-1 text-sm text-stone-400">Review the detected regions against the original glyph before opening annotation.</p>
+                <section className="flex flex-col min-h-[420px] rounded-[28px] border border-stone-800 bg-stone-900/80 p-5 lg:p-6">
+                  <div className="flex flex-col gap-4 border-b border-stone-800 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-lg font-semibold text-stone-100 truncate max-w-[200px] sm:max-w-[300px]" title={currentRecord.imageName}>
+                        {currentRecord.imageName}
+                      </h2>
+                      {focusedIdx !== null && (
+                        <span className="rounded-md bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-500 border border-amber-500/20">
+                          Focus: {focusedIdx}
+                        </span>
+                      )}
                     </div>
-                    <div className="inline-flex rounded-lg border border-stone-700 bg-stone-950 p-1">
+                    <div className="inline-flex rounded-lg border border-stone-700 bg-stone-950 p-1 shrink-0">
                       {(['all', 'focused', 'hidden'] as OverlayMode[]).map((mode) => {
                         const isActive = overlayMode === mode;
                         return (
@@ -569,30 +611,55 @@ export default function WorkspacePage() {
                     </div>
                   </div>
 
-                  <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-                    <div className="rounded-xl border border-stone-800 bg-stone-950/70 px-4 py-3">
-                      <div className="text-stone-500">Image</div>
-                      <div className="mt-1 truncate font-medium text-stone-100">{currentRecord.imageName}</div>
-                    </div>
-                    <div className="rounded-xl border border-stone-800 bg-stone-950/70 px-4 py-3">
-                      <div className="text-stone-500">Overlay focus</div>
-                      <div className="mt-1 font-medium text-stone-100">
-                        {focusedIdx !== null
-                          ? `${focusedIdx} (${(currentRecord.annotations ?? {})[focusedIdx] || currentRecord.result.elements[focusedIdx]?.class_name || 'Unknown'})`
-                          : 'None selected'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="relative mt-5 flex min-h-[360px] items-center justify-center overflow-hidden rounded-[24px] border border-stone-800 bg-stone-950">
-                    <div className="relative inline-block max-w-full p-3">
+                  <div 
+                    className="relative mt-5 flex flex-1 min-h-[360px] items-center justify-center overflow-hidden rounded-[24px] border border-stone-800 bg-stone-950"
+                    onWheel={(e) => { 
+                      e.preventDefault(); 
+                      const zoomChange = e.deltaY < 0 ? 0.15 : -0.15;
+                      setZoom(z => Math.max(0.25, Math.min(4, z + zoomChange)));
+                    }}
+                  >
+                    <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: 'transform 0.1s ease' }} className="relative inline-block">
                       <img
                         ref={imageRef}
                         src={currentRecord.imageDataUrl}
                         alt={currentRecord.imageName}
                         className="block max-h-[72vh] max-w-full rounded-lg object-contain"
                       />
-                      <canvas ref={canvasRef} className="pointer-events-none absolute left-3 top-3" />
+                      <canvas
+                        ref={canvasRef}
+                        className="absolute left-0 top-0 cursor-pointer"
+                        onClick={(event) => {
+                          if (!currentRecord) {
+                            return;
+                          }
+
+                          const matchedIdx = getElementIndexFromCanvasPoint(event.nativeEvent.offsetX, event.nativeEvent.offsetY);
+                          if (matchedIdx === null) {
+                            return;
+                          }
+
+                          setFocusedIdx(matchedIdx);
+                          toggleExpand(matchedIdx);
+                        }}
+                        onMouseMove={(event) => {
+                          const matchedIdx = getElementIndexFromCanvasPoint(event.nativeEvent.offsetX, event.nativeEvent.offsetY);
+                          setHoveredIdx(matchedIdx);
+                        }}
+                        onMouseLeave={() => setHoveredIdx(null)}
+                      />
+                    </div>
+                    
+                    <div className="absolute bottom-4 right-4 flex items-center gap-1 rounded-xl border border-stone-700 bg-stone-900/90 p-1 backdrop-blur-sm">
+                      <button type="button" onClick={() => setZoom(z => Math.min(4, z + 0.25))} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title="Zoom in">
+                        <ZoomIn size={16} />
+                      </button>
+                      <button type="button" onClick={() => { setZoom(1); setPanOffset({x:0, y:0}); }} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title="Fit to view">
+                        <Maximize2 size={16} />
+                      </button>
+                      <button type="button" onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title="Zoom out">
+                        <ZoomOut size={16} />
+                      </button>
                     </div>
                   </div>
                 </section>
@@ -602,16 +669,11 @@ export default function WorkspacePage() {
                     <div>
                       <p className="text-xs uppercase tracking-[0.24em] text-stone-500">Proposal panel</p>
                       <h2 className="mt-1 text-lg font-semibold text-stone-100">Detected elements</h2>
-                      <p className="mt-1 text-sm text-stone-400">Browse every proposal, expand alternatives, and lock focus for the overlay.</p>
                     </div>
-                    <div className="space-y-2 text-right">
-                      <div className="rounded-xl border border-stone-800 bg-stone-950/70 px-3 py-2">
-                        <div className="text-xs text-stone-500">Visible proposals</div>
-                        <div className="text-lg font-semibold text-stone-100">{currentRecord.result.elements.length}</div>
-                      </div>
+                    <div className="text-right">
                       <button
                         type="button"
-                        onClick={goToAnnotation}
+                        onClick={handleEditorHandoff}
                         className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-stone-950 transition-colors hover:bg-amber-400"
                       >
                         <Edit3 size={16} /> Annotate current record
@@ -624,14 +686,34 @@ export default function WorkspacePage() {
                       <Info className="mt-0.5 shrink-0 text-amber-500" size={18} />
                       <div>
                         <p className="text-sm text-stone-200">All proposals were rejected — consider annotating to improve results.</p>
-                        <button type="button" onClick={goToAnnotation} className="mt-1 text-xs font-medium text-amber-400 hover:text-amber-300">
+                        <button type="button" onClick={handleEditorHandoff} className="mt-1 text-xs font-medium text-amber-400 hover:text-amber-300">
                           Go to annotation →
                         </button>
                       </div>
                     </div>
                   )}
 
-                  <div className="flex-1 space-y-3 overflow-y-auto pr-2">
+                  <div
+                    className="flex-1 space-y-1 overflow-y-auto pr-2"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (!currentRecord) return;
+                      const total = currentRecord.result.elements.length;
+                      if (total === 0) return;
+                      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        setFocusedIdx((prev) => (prev === null ? 0 : (prev + 1) % total));
+                      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        setFocusedIdx((prev) => (prev === null ? total - 1 : (prev - 1 + total) % total));
+                      } else if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        if (focusedIdx !== null) toggleExpand(focusedIdx);
+                      } else if (e.key === 'Escape') {
+                        setFocusedIdx(null);
+                      }
+                    }}
+                  >
                     {currentRecord.result.elements.length === 0 ? (
                       <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-stone-800 bg-stone-950/50 p-6 text-center">
                         <Info className="mb-3 text-stone-600" size={32} />
@@ -650,34 +732,46 @@ export default function WorkspacePage() {
                         const indexBadgeClasses = element.rejected ? 'bg-red-500 text-stone-950' : 'bg-amber-500 text-stone-950';
 
                         const [, , boxWidth, boxHeight] = element.bbox;
-                        let destinationWidth = 80;
-                        let destinationHeight = 80;
+                        let destinationWidth = 48;
+                        let destinationHeight = 48;
                         if (boxWidth >= boxHeight) {
-                          destinationHeight = Math.max(1, 80 * (boxHeight / boxWidth));
+                          destinationHeight = Math.max(1, 48 * (boxHeight / boxWidth));
                         } else {
-                          destinationWidth = Math.max(1, 80 * (boxWidth / boxHeight));
+                          destinationWidth = Math.max(1, 48 * (boxWidth / boxHeight));
                         }
 
                         return (
-                          <div
-                            key={idx}
-                            className={`overflow-hidden rounded-2xl border transition-colors ${isFocused ? 'border-amber-500/60 shadow-[0_0_0_1px_rgba(245,158,11,0.25)]' : isHovered ? 'border-stone-700' : 'border-stone-800'} bg-stone-950`}
-                            onMouseEnter={() => setHoveredIdx(idx)}
-                            onMouseLeave={() => setHoveredIdx((current) => (current === idx ? null : current))}
-                          >
+                          <div key={idx} className="flex flex-col">
                             <div
-                              className={`flex cursor-pointer items-center justify-between p-3 transition-colors ${isFocused ? 'bg-amber-500/5' : 'hover:bg-stone-800/50'}`}
+                              className={`flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer transition-colors ${
+                                isFocused ? 'border-amber-500/60 bg-amber-500/5' : isHovered ? 'border-stone-700 bg-stone-900' : 'border-stone-800 bg-stone-950'
+                              }`}
                               onClick={() => {
                                 setFocusedIdx(idx);
                                 toggleExpand(idx);
                               }}
-                              onFocus={() => setFocusedIdx(idx)}
-                              onBlur={() => setFocusedIdx((current) => (current === idx ? null : current))}
+                              onMouseEnter={() => setHoveredIdx(idx)}
+                              onMouseLeave={() => setHoveredIdx((current) => (current === idx ? null : current))}
                               tabIndex={0}
-                              role="button"
                             >
-                              <div className="flex items-center gap-3">
-                                <div className="flex h-[80px] w-[80px] shrink-0 items-center justify-center overflow-hidden rounded-lg border border-stone-800/50 bg-stone-900">
+                              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded text-xs font-bold ${indexBadgeClasses}`}>
+                                {idx}
+                              </span>
+                              <span className="flex-1 truncate text-sm text-stone-100">{displayClass}</span>
+                              {hasAnnotation && <CheckCircle2 size={12} className="text-green-400 shrink-0" />}
+                              <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${badgeClasses}`}>
+                                {(element.confidence * 100).toFixed(1)}%
+                              </span>
+                              {isExpanded ? (
+                                <ChevronUp size={14} className="shrink-0 text-stone-500" />
+                              ) : (
+                                <ChevronDown size={14} className="shrink-0 text-stone-500" />
+                              )}
+                            </div>
+
+                            <div className={isExpanded ? "mt-1 rounded-xl border border-amber-500/30 bg-stone-950/80 p-3" : "hidden"}>
+                              <div className="flex gap-4">
+                                <div className="flex h-[48px] w-[48px] shrink-0 items-center justify-center overflow-hidden rounded border border-stone-800/50 bg-stone-900">
                                   <canvas
                                     ref={(canvas) => {
                                       cropCanvasRefs.current[idx] = canvas;
@@ -687,62 +781,42 @@ export default function WorkspacePage() {
                                     className="block rounded bg-stone-800"
                                   />
                                 </div>
-                                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm font-bold ${indexBadgeClasses}`}>
-                                  {idx}
-                                </span>
-                                <div className="ml-1 flex flex-col">
-                                  <span className="font-semibold text-stone-100">{displayClass}</span>
-                                  {hasAnnotation && (
-                                    <span className="mt-0.5 flex items-center gap-1 text-xs text-green-400">
-                                      <CheckCircle2 size={12} /> Corrected
-                                    </span>
-                                  )}
+
+                                <div className="flex-1">
+                                  <div className="mb-1 text-xs font-medium text-stone-400">Alternative predictions:</div>
+                                  <div className="space-y-1">
+                                    {element.top_k.map((topItem, topItemIndex) => (
+                                      <div key={topItemIndex} className="flex items-center justify-between text-xs">
+                                        <span className="text-stone-300">{topItem.class_name}</span>
+                                        <span className="text-stone-500">{(topItem.confidence * 100).toFixed(1)}%</span>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               </div>
-                              <div className="ml-2 flex items-center gap-3">
-                                {isFocused && <span className="hidden text-xs font-medium uppercase tracking-wide text-amber-400 sm:inline-block">Focused</span>}
-                                <span className={`shrink-0 rounded-md px-2 py-1 text-sm font-medium ${badgeClasses}`}>
-                                  {(element.confidence * 100).toFixed(1)}%
-                                </span>
-                                {isExpanded ? <ChevronUp size={18} className="shrink-0 text-stone-500" /> : <ChevronDown size={18} className="shrink-0 text-stone-500" />}
-                              </div>
+
+                              {element.rejected && (
+                                <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-400/10 p-2 text-red-400">
+                                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                                  <span className="text-xs">Low confidence prediction. Review recommended.</span>
+                                </div>
+                              )}
+
+                              {(isFocused || element.rejected) && (
+                                <div className="mt-3 flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={handleEditorHandoff}
+                                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                      element.rejected ? 'bg-red-500 text-stone-950 hover:bg-red-400' : 'bg-amber-500 text-stone-950 hover:bg-amber-400'
+                                    }`}
+                                  >
+                                    <Edit3 size={14} />
+                                    {element.rejected ? 'Correct this element' : 'Annotate'}
+                                  </button>
+                                </div>
+                              )}
                             </div>
-
-                            {isExpanded && (
-                              <div className="border-t border-stone-800/50 bg-stone-950/50 p-3 pt-0">
-                                <div className="mb-2 mt-3 text-sm font-medium text-stone-400">Alternative predictions:</div>
-                                <div className="space-y-2">
-                                  {element.top_k.map((topItem, topItemIndex) => (
-                                    <div key={topItemIndex} className="flex items-center justify-between text-sm">
-                                      <span className="text-stone-300">{topItem.class_name}</span>
-                                      <span className="text-stone-500">{(topItem.confidence * 100).toFixed(1)}%</span>
-                                    </div>
-                                  ))}
-                                </div>
-
-                                {element.rejected && (
-                                  <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-400/10 p-2 text-red-400">
-                                    <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                                    <span className="text-xs">Low confidence prediction. Review recommended.</span>
-                                  </div>
-                                )}
-
-                                {(isFocused || element.rejected) && (
-                                  <div className="mt-4 flex justify-end">
-                                    <button
-                                      type="button"
-                                      onClick={goToAnnotation}
-                                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                        element.rejected ? 'bg-red-500 text-stone-950 hover:bg-red-400' : 'bg-amber-500 text-stone-950 hover:bg-amber-400'
-                                      }`}
-                                    >
-                                      <Edit3 size={14} />
-                                      {element.rejected ? 'Correct this element' : 'Annotate'}
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            )}
                           </div>
                         );
                       })
@@ -756,9 +830,9 @@ export default function WorkspacePage() {
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/20 bg-amber-400/10 text-amber-300">
                 <Info size={28} />
               </div>
-              <h2 className="mt-5 text-2xl font-semibold text-stone-100">No analysis selected</h2>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-stone-400">
-                Upload a new glyph or pick a saved run from history to open the overlay canvas, proposal cards, and annotation handoff controls.
+              <h2 className="mt-5 text-xl font-semibold text-stone-100">No analysis selected</h2>
+              <p className="mt-2 text-sm text-stone-400">
+                Upload a new glyph or select a saved run from history.
               </p>
             </div>
           )}

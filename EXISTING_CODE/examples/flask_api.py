@@ -24,19 +24,9 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from codex_model import CodexClassifier
-from codex_pipeline.segmentation import MobileSAMSegmenter
 
 app = Flask(__name__)
 clf = CodexClassifier()
-sam_segmenter: MobileSAMSegmenter | None = None
-
-
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5173"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return response
 
 
 @app.route("/classify", methods=["POST"])
@@ -58,28 +48,30 @@ def classify_batch():
 
 @app.route("/segment", methods=["POST"])
 def segment():
-    global sam_segmenter
-
     if "image" not in request.files:
         return jsonify({"error": "No 'image' file in request"}), 400
 
+    from mobile_sam import sam_model_registry, SamAutomaticMaskGenerator
+
     img = np.array(Image.open(io.BytesIO(request.files["image"].read())).convert("RGB"))
 
+    if not hasattr(app, "_sam_gen"):
+        checkpoint = str(Path.home() / ".cache/mobile_sam/mobile_sam.pt")
+        sam = sam_model_registry["vit_t"](checkpoint=checkpoint)
+        sam.eval()
+        app._sam_gen = SamAutomaticMaskGenerator(sam, points_per_side=16)
+
     h, w = img.shape[:2]
-
-    if sam_segmenter is None:
-        sam_segmenter = MobileSAMSegmenter(points_per_side=16)
-
-    proposals = sam_segmenter.segment_page(img)
-    proposals = sam_segmenter.extract_crops(img, proposals)
+    masks = app._sam_gen.generate(img)
 
     elements = []
-    for proposal in proposals:
-        if proposal.crop is None:
+    for m in masks:
+        if m["area"] < 50 or m["area"] > h * w * 0.85 or m["stability_score"] < 0.8:
             continue
-
-        x, y, bw, bh = proposal.bbox
-        result = clf.classify(proposal.crop)
+        x, y, bw, bh = m["bbox"]
+        crop = img[y:y+bh, x:x+bw].copy()
+        crop[~m["segmentation"][y:y+bh, x:x+bw]] = 255
+        result = clf.classify(crop)
         elements.append({"bbox": [int(x), int(y), int(bw), int(bh)], **result})
 
     return jsonify({"num_elements": len(elements), "image_size": [int(w), int(h)], "elements": elements})

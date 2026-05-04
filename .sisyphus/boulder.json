@@ -1,154 +1,53 @@
 {
-  "active_plan": "/home/sina/omxpro/clinic-codex/.sisyphus/plans/repo-cleanup-continuation.md",
-  "started_at": "2026-05-04T13:46:20.050Z",
+  "active_plan": "/home/sina/omxpro/clinic-codex/.sisyphus/plans/workspace-ui-redesign.md",
+  "started_at": "2026-05-04T23:31:58.391Z",
   "session_ids": [
     "ses_20d48c66bffeHfLVSuNTbjZv7a",
-    "ses_20cc0672bffeOe678H2O1RGAbE",
-    "ses_20cbbc9b2ffenba3H2knxvM5iR",
-    "ses_20cb7f8e9ffegPtxQX86H8d0g1",
-    "ses_20cb36013fferEpp90GEBUKp2R",
-    "ses_20cb204beffea53g2Z4VdvO3wM",
-    "ses_20cb0e6d3ffeigg6KvNAjnZzga",
-    "ses_20cac84ebffeq144ZVl5HjOe93",
-    "ses_20caa97d2ffeUioLvSLx0ofWq8",
-    "ses_20ca8f404ffeEWPEbb6PBlsizM",
-    "ses_20ca737d3ffeME65VOf4KNiaUg",
-    "ses_20ca5a4a9ffea3105nsf1Do1pL",
-    "ses_20ca47e9dffeG47OrIlrXzWonV",
-    "ses_20ca2803fffe1xP9shq1eZGw51",
-    "ses_20c9e931dffe6cuXGAaWH83R22",
-    "ses_20c9ebd4bffeUyhcliJ4APNpgv",
-    "ses_20c9e6ed1ffeD7HDlVc0ZPJEMC",
-    "ses_20c9e6e04ffeNRdZbUwLXjZBsz",
-    "ses_20c9723b0ffeaMu3P7qMTvjGNX"
+    "ses_20aa7ea49ffeURd3yXbslb8z1b",
+    "ses_20aa5c45effe4wT3f8tEZQZkq7",
+    "ses_20aa38abeffecShdUe4s61T8n6",
+    "ses_20a9f0ffcffeo6QtpX33gHpjTX",
+    "ses_20a9cdc0effecdNjJxeOgPwfk3",
+    "ses_20a9b15bbffeAL1tEJ0NwqZT8Y"
   ],
-  "plan_name": "repo-cleanup-continuation",
+  "plan_name": "workspace-ui-redesign",
   "agent": "atlas",
   "task_sessions": {
     "todo:1": {
       "task_key": "todo:1",
       "task_label": "1",
-      "task_title": "Create a canonical inventory and retention policy map",
-      "session_id": "ses_20cc0672bffeOe678H2O1RGAbE",
+      "task_title": "Replace the current hero/KPI shell with compact production chrome",
+      "session_id": "ses_20aa38abeffecShdUe4s61T8n6",
       "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "updated_at": "2026-05-04T13:52:57.577Z"
-    },
-    "todo:2": {
-      "task_key": "todo:2",
-      "task_label": "2",
-      "task_title": "Define smoke-check baseline before cleanup",
-      "session_id": "ses_20cbbc9b2ffenba3H2knxvM5iR",
-      "agent": "Sisyphus-Junior",
-      "category": "quick",
-      "updated_at": "2026-05-04T13:57:26.925Z"
-    },
-    "todo:3": {
-      "task_key": "todo:3",
-      "task_label": "3",
-      "task_title": "Expand root `.gitignore` for generated and OS-specific artifacts",
-      "session_id": "ses_20cb7f8e9ffegPtxQX86H8d0g1",
-      "agent": "Sisyphus-Junior",
-      "category": "quick",
-      "updated_at": "2026-05-04T14:00:56.984Z"
-    },
-    "todo:4": {
-      "task_key": "todo:4",
-      "task_label": "4",
-      "task_title": "Replace the frontend template README with project-specific documentation",
-      "session_id": "ses_20cb36013fferEpp90GEBUKp2R",
-      "agent": "Sisyphus-Junior",
-      "category": "writing",
-      "updated_at": "2026-05-04T14:03:43.687Z"
-    },
-    "todo:5": {
-      "task_key": "todo:5",
-      "task_label": "5",
-      "task_title": "Add a root README that defines the project and how to run it",
-      "session_id": "ses_20cb204beffea53g2Z4VdvO3wM",
-      "agent": "Sisyphus-Junior",
-      "category": "writing",
-      "updated_at": "2026-05-04T14:05:09.622Z"
+      "category": "visual-engineering",
+      "updated_at": "2026-05-04T23:42:04.503Z"
     },
     "todo:6": {
       "task_key": "todo:6",
       "task_label": "6",
-      "task_title": "Externalize the frontend API base URL",
-      "session_id": "ses_20cb0e6d3ffeigg6KvNAjnZzga",
+      "task_title": "Build the image-first canvas stage with floating zoom and overlay controls",
+      "session_id": "ses_20a9f0ffcffeo6QtpX33gHpjTX",
       "agent": "Sisyphus-Junior",
-      "category": "quick",
-      "updated_at": "2026-05-04T14:08:25.140Z"
+      "category": "visual-engineering",
+      "updated_at": "2026-05-04T23:45:55.779Z"
     },
     "todo:7": {
       "task_key": "todo:7",
       "task_label": "7",
-      "task_title": "Document backend/demo artifact expectations and supported runtime path",
-      "session_id": "ses_20cac84ebffeq144ZVl5HjOe93",
+      "task_title": "Make overlay boxes directly clickable and synchronized with the detail panel",
+      "session_id": "ses_20a9cdc0effecdNjJxeOgPwfk3",
       "agent": "Sisyphus-Junior",
-      "category": "writing",
-      "updated_at": "2026-05-04T14:11:02.956Z"
+      "category": "deep",
+      "updated_at": "2026-05-04T23:47:52.172Z"
     },
     "todo:8": {
       "task_key": "todo:8",
       "task_label": "8",
-      "task_title": "Remove or archive agreed non-canonical root and nested noise",
-      "session_id": "ses_20caa97d2ffeUioLvSLx0ofWq8",
+      "task_title": "Replace bulky proposal cards with a compact contextual region panel",
+      "session_id": "ses_20a9b15bbffeAL1tEJ0NwqZT8Y",
       "agent": "Sisyphus-Junior",
-      "category": "unspecified-low",
-      "updated_at": "2026-05-04T14:13:23.394Z"
-    },
-    "todo:9": {
-      "task_key": "todo:9",
-      "task_label": "9",
-      "task_title": "Normalize local dependency and output policy",
-      "session_id": "ses_20ca8f404ffeEWPEbb6PBlsizM",
-      "agent": "Sisyphus-Junior",
-      "category": "writing",
-      "updated_at": "2026-05-04T14:15:10.708Z"
-    },
-    "todo:10": {
-      "task_key": "todo:10",
-      "task_label": "10",
-      "task_title": "Add CI workflow for repository smoke checks",
-      "session_id": "ses_20ca737d3ffeME65VOf4KNiaUg",
-      "agent": "Sisyphus-Junior",
-      "category": "unspecified-low",
-      "updated_at": "2026-05-04T14:17:17.621Z"
-    },
-    "todo:11": {
-      "task_key": "todo:11",
-      "task_label": "11",
-      "task_title": "Re-run smoke checks against the cleaned repository",
-      "session_id": "ses_20ca5a4a9ffea3105nsf1Do1pL",
-      "agent": "Sisyphus-Junior",
-      "category": "unspecified-low",
-      "updated_at": "2026-05-04T14:18:45.769Z"
-    },
-    "todo:12": {
-      "task_key": "todo:12",
-      "task_label": "12",
-      "task_title": "Audit docs, paths, and commands against the actual cleaned repo",
-      "session_id": "ses_20ca47e9dffeG47OrIlrXzWonV",
-      "agent": "Sisyphus-Junior",
-      "category": "unspecified-low",
-      "updated_at": "2026-05-04T14:20:55.074Z"
-    },
-    "todo:13": {
-      "task_key": "todo:13",
-      "task_label": "13",
-      "task_title": "Prepare the atomic commit sequence and staging boundaries",
-      "session_id": "ses_20ca2803fffe1xP9shq1eZGw51",
-      "agent": "Sisyphus-Junior",
-      "category": "unspecified-high",
-      "updated_at": "2026-05-04T14:24:35.084Z"
-    },
-    "final-wave:f1": {
-      "task_key": "final-wave:f1",
-      "task_label": "F1",
-      "task_title": "**Plan Compliance Audit** — `oracle`",
-      "session_id": "ses_20c9723b0ffeaMu3P7qMTvjGNX",
-      "agent": "oracle",
-      "updated_at": "2026-05-04T14:35:29.461Z"
+      "category": "visual-engineering",
+      "updated_at": "2026-05-04T23:50:15.445Z"
     }
   }
 }

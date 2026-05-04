@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Save, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Save, Loader2, AlertCircle } from 'lucide-react';
 import { getAnalysisById, updateAnnotations } from '../services/storage';
 import { getClasses } from '../services/api';
 import type { AnalysisRecord } from '../types';
@@ -8,6 +8,13 @@ import type { AnalysisRecord } from '../types';
 export default function AnnotationPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const cardRefs = useRef<Array<HTMLDivElement | null>>([]);
+
+  const elementParam = searchParams.get('element');
+  const focusedElementIdx = elementParam !== null && !Number.isNaN(Number(elementParam))
+    ? Number(elementParam)
+    : null;
   
   const [record, setRecord] = useState<AnalysisRecord | null>(null);
   const [classes, setClasses] = useState<string[]>([]);
@@ -30,7 +37,7 @@ export default function AnnotationPage() {
 
       const initialAnns: Record<number, string> = { ...(rec.annotations ?? {}) };
       rec.result.elements.forEach((el, idx) => {
-        if (el.rejected && !initialAnns[idx]) {
+        if (initialAnns[idx] == null) {
           initialAnns[idx] = el.class_name;
         }
       });
@@ -50,11 +57,26 @@ export default function AnnotationPage() {
     loadData();
   }, [id]);
 
+  useEffect(() => {
+    if (loading || focusedElementIdx === null || !record) {
+      return;
+    }
+
+    if (focusedElementIdx < 0 || focusedElementIdx >= record.result.elements.length) {
+      return;
+    }
+
+    cardRefs.current[focusedElementIdx]?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  }, [focusedElementIdx, loading, record]);
+
   if (!record && !loading) {
     return (
       <div className="max-w-2xl mx-auto text-center py-12">
         <h2 className="text-2xl font-bold text-stone-100 mb-4">Analysis not found</h2>
-        <Link to="/dashboard" className="text-amber-400 hover:text-amber-300 inline-flex items-center gap-2">
+        <Link to="/" className="text-amber-400 hover:text-amber-300 inline-flex items-center gap-2">
           <ArrowLeft size={18} /> Back to History
         </Link>
       </div>
@@ -65,26 +87,6 @@ export default function AnnotationPage() {
     return (
       <div className="flex justify-center items-center h-64">
         <Loader2 className="animate-spin text-amber-500" size={32} />
-      </div>
-    );
-  }
-
-  const rejectedIndices = record?.result.elements
-    .map((el, idx) => ({ el, idx }))
-    .filter(({ el }) => el.rejected)
-    .map(({ idx }) => idx) || [];
-
-  if (rejectedIndices.length === 0) {
-    return (
-      <div className="max-w-2xl mx-auto text-center py-12 space-y-6">
-        <div className="flex justify-center text-green-400 mb-4">
-          <CheckCircle size={64} />
-        </div>
-        <h2 className="text-2xl font-bold text-stone-100">All elements are confident!</h2>
-        <p className="text-stone-400">There are no rejected elements that require manual annotation.</p>
-        <Link to={`/analysis/${id}`} className="text-amber-400 hover:text-amber-300 inline-flex items-center gap-2">
-          <ArrowLeft size={18} /> Back to Analysis
-        </Link>
       </div>
     );
   }
@@ -100,7 +102,7 @@ export default function AnnotationPage() {
       return;
     }
     setTimeout(() => {
-      navigate(`/analysis/${id}`);
+      navigate('/');
     }, 300);
   };
 
@@ -108,10 +110,10 @@ export default function AnnotationPage() {
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Link to={`/analysis/${id}`} className="text-stone-400 hover:text-stone-100 flex items-center gap-2 transition-colors">
+          <Link to="/" className="text-stone-400 hover:text-stone-100 flex items-center gap-2 transition-colors">
             <ArrowLeft size={18} /> Back to Analysis
           </Link>
-          <h1 className="text-2xl font-bold">Annotate Rejected Elements</h1>
+          <h1 className="text-2xl font-bold">Annotate Elements</h1>
         </div>
         <button
           onClick={handleSave}
@@ -137,21 +139,31 @@ export default function AnnotationPage() {
           </div>
         )}
         <p className="text-stone-400 mb-6">
-          Please review the following low-confidence predictions and correct them if necessary.
+          Please review the following predictions and correct them if necessary.
         </p>
 
         <div className="space-y-6">
-          {rejectedIndices.map((idx) => {
-            const el = record!.result.elements[idx];
+          {record!.result.elements.map((el, idx) => {
+            const isRejected = el.rejected;
+            const isFocused = idx === focusedElementIdx;
             return (
-              <div key={idx} className="bg-stone-950 border border-stone-800 rounded-lg p-5 flex flex-col md:flex-row md:items-start gap-6">
+              <div
+                key={idx}
+                ref={(node) => {
+                  cardRefs.current[idx] = node;
+                }}
+                className={`bg-stone-950 border rounded-lg p-5 flex flex-col md:flex-row md:items-start gap-6 transition-colors ${isFocused ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-stone-800'}`}
+              >
                 <div className="flex items-center gap-4 shrink-0">
-                  <span className="w-12 h-12 flex items-center justify-center rounded-lg bg-red-500 text-stone-950 font-bold text-xl">
+                  <span className={`w-12 h-12 flex items-center justify-center rounded-lg text-stone-950 font-bold text-xl ${isRejected ? 'bg-red-500' : 'bg-amber-400'}`}>
                     {idx}
                   </span>
                   <div>
                     <div className="text-stone-400 text-sm">Predicted</div>
-                    <div className="font-semibold text-red-400">{el.class_name}</div>
+                    <div className={`font-semibold ${isRejected ? 'text-red-400' : 'text-amber-300'}`}>{el.class_name}</div>
+                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${isRejected ? 'bg-red-500/10 text-red-300 border border-red-500/20' : 'bg-amber-500/10 text-amber-200 border border-amber-500/20'}`}>
+                      {isRejected ? 'Rejected' : 'Detected'}
+                    </div>
                   </div>
                 </div>
 
