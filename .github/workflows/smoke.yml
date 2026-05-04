@@ -1,0 +1,77 @@
+name: Smoke Checks
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  frontend-smoke:
+    name: Frontend Smoke (build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: codex-frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: codex-frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: codex-frontend
+        run: npm run build
+
+  frontend-lint:
+    name: Frontend Lint (warn only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: codex-frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: codex-frontend
+        run: npm ci
+
+      - name: Lint (pre-existing errors allowed)
+        working-directory: codex-frontend
+        run: npm run lint
+        continue-on-error: true
+
+  backend-import:
+    name: Backend Import Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        working-directory: frontend_integration_fix/frontend_integration
+        run: pip install -r requirements.txt
+
+      - name: Import check (no model weights needed)
+        working-directory: frontend_integration_fix/frontend_integration
+        run: python -c "from codex_model import CodexClassifier; print('import ok')"
