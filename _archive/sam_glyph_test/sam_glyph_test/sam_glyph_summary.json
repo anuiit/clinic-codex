@@ -1,0 +1,211 @@
+{
+  "atl": [
+    {
+      "image": "026r_a_07-2.jpg",
+      "whole_prediction": "ehuatl_2",
+      "whole_confidence": 0.543452262878418,
+      "num_segments": 7,
+      "num_accepted": 7,
+      "num_rejected": 0,
+      "elements": {
+        "xiuhuitzolli": 1,
+        "nextli": 1,
+        "quetzalli": 2,
+        "quiyahuitl": 1,
+        "tlilhuahuana": 1,
+        "mecatl": 1
+      }
+    },
+    {
+      "image": "026r_b_18-2.jpg",
+      "whole_prediction": "quiyahuitl",
+      "whole_confidence": 0.46705955266952515,
+      "num_segments": 28,
+      "num_accepted": 28,
+      "num_rejected": 0,
+      "elements": {
+        "xolotl": 1,
+        "tzintli": 1,
+        "cuahuitl_2": 1,
+        "quiyahuitl": 1,
+        "quemitl": 1,
+        "huitzilin": 3,
+        "chian": 1,
+        "coztic": 8,
+        "tlaxcalli": 2,
+        "tamalli": 4,
+        "ayatl": 1,
+        "cactli": 1,
+        "quetzallalpiloni": 1,
+        "comitl": 1,
+        "tepetla": 1
+      }
+    }
+  ],
+  "calli": [
+    {
+      "image": "032_05_005-6.jpg",
+      "whole_prediction": "acatl",
+      "whole_confidence": 0.7590430378913879,
+      "num_segments": 4,
+      "num_accepted": 4,
+      "num_rejected": 0,
+      "elements": {
+        "acatl": 1,
+        "nenepilli": 1,
+        "tonatiuh": 1,
+        "coztic": 1
+      }
+    },
+    {
+      "image": "032_05_009-6.jpg",
+      "whole_prediction": "acatl",
+      "whole_confidence": 0.8879163265228271,
+      "num_segments": 5,
+      "num_accepted": 5,
+      "num_rejected": 0,
+      "elements": {
+        "acatl": 1,
+        "coztic": 1,
+        "mecatl": 1,
+        "omitl_2": 2
+      }
+    }
+  ],
+  "cohuatl": [
+    {
+      "image": "032_05_032-6.jpg",
+      "whole_prediction": "ixtlilli",
+      "whole_confidence": 0.6449810266494751,
+      "num_segments": 4,
+      "num_accepted": 4,
+      "num_rejected": 0,
+      "elements": {
+        "camachalli": 1,
+        "huitzilin": 1,
+        "nochtli": 1,
+        "tzintli": 1
+      }
+    },
+    {
+      "image": "032_05_044-6.jpg",
+      "whole_prediction": "cuecuextli",
+      "whole_confidence": 0.5235981941223145,
+      "num_segments": 6,
+      "num_accepted": 6,
+      "num_rejected": 0,
+      "elements": {
+        "ococuahuitl": 1,
+        "zolin": 1,
+        "huitzilin": 1,
+        "coztic": 2,
+        "xiuhuitzolli": 1
+      }
+    }
+  ],
+  "cuauhtli": [
+    {
+      "image": "032_05_024-6.jpg",
+      "whole_prediction": "xihuitl_4",
+      "whole_confidence": 0.8904412984848022,
+      "num_segments": 7,
+      "num_accepted": 7,
+      "num_rejected": 0,
+      "elements": {
+        "chitatli": 1,
+        "ihuitl": 1,
+        "olin": 1,
+        "tlaxcalli": 1,
+        "huitzilin": 1,
+        "tocatl": 1,
+        "cuechtli": 1
+      }
+    },
+    {
+      "image": "072_21-9.jpg",
+      "whole_prediction": "xihuitl_4",
+      "whole_confidence": 0.6091951131820679,
+      "num_segments": 5,
+      "num_accepted": 5,
+      "num_rejected": 0,
+      "elements": {
+        "cuaitl": 1,
+        "huipilli": 1,
+        "coztic": 1,
+        "xiuhuitzolli": 1,
+        "chitatli": 1
+      }
+    }
+  ],
+  "tochtli": [
+    {
+      "image": "032_05_008-6.jpg",
+      "whole_prediction": "chitatli",
+      "whole_confidence": 0.5416896343231201,
+      "num_segments": 7,
+      "num_accepted": 7,
+      "num_rejected": 0,
+      "elements": {
+        "cueitl": 2,
+        "chian": 1,
+        "coztic": 2,
+        "nenepilli": 1,
+        "95": 1
+      }
+    },
+    {
+      "image": "032_05_012-6.jpg",
+      "whole_prediction": "xoxoqui",
+      "whole_confidence": 0.6622183918952942,
+      "num_segments": 7,
+      "num_accepted": 7,
+      "num_rejected": 0,
+      "elements": {
+        "huehuetl": 1,
+        "cueitl": 1,
+        "quetzalli": 1,
+        "elli": 1,
+        "coztic": 3
+      }
+    }
+  ],
+  "pantli": [
+    {
+      "image": "027_05-3.jpg",
+      "whole_prediction": "comitl",
+      "whole_confidence": 0.604319155216217,
+      "num_segments": 14,
+      "num_accepted": 14,
+      "num_rejected": 0,
+      "elements": {
+        "ococuahuitl": 1,
+        "huexocuahuitl": 4,
+        "acayetl": 7,
+        "tochtli": 1,
+        "nenetl": 1
+      }
+    },
+    {
+      "image": "030_093r_03-5.jpg",
+      "whole_prediction": "cuetlaxtli",
+      "whole_confidence": 0.760145902633667,
+      "num_segments": 18,
+      "num_accepted": 18,
+      "num_rejected": 0,
+      "elements": {
+        "tlanextli": 1,
+        "84": 1,
+        "chian": 1,
+        "matlactli": 1,
+        "tochtli": 2,
+        "octli": 3,
+        "coztic": 2,
+        "ocotl": 1,
+        "huitzilin": 3,
+        "acalli": 1,
+        "mecatl": 1,
+        "centli": 1
+      }
+    }
+  ]
+}
