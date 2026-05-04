@@ -28,7 +28,7 @@ export default function AnnotationPage() {
 
       if (!rec) { setLoading(false); return; }
 
-      const initialAnns: Record<number, string> = { ...rec.annotations };
+      const initialAnns: Record<number, string> = { ...(rec.annotations ?? {}) };
       rec.result.elements.forEach((el, idx) => {
         if (el.rejected && !initialAnns[idx]) {
           initialAnns[idx] = el.class_name;
