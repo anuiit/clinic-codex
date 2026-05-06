@@ -1,101 +1,60 @@
-# Codex Glyph Analyzer
+# Clinic Codex
 
-The Codex Glyph Analyzer is an ML-powered system for the segmentation and classification of Nahuatl and Codex glyphs. It identifies individual elements within complex glyphs and classifies them against a known set of historical archetypes.
+Clinic Codex is an annotation tool for Nahuatl glyphs (codices). It uses machine learning to segment and classify individual elements within complex historical glyphs, helping researchers identify archetypes and analyze historical manuscripts.
 
-## Project Structure
+---
 
-- **`codex-frontend/`**: A React application built with Vite and TypeScript. It provides a web interface for uploading images, viewing segmentation results, and annotating glyph elements.
-- **`frontend_integration_fix/frontend_integration/`**: The backend and AI integration package. It includes the Python-based ML models (classification and segmentation), a Flask API for integration, and sample data.
+## For Researchers (Non-Technical)
 
-## Prerequisites
+### What it does
+- **Analyze codices**: Upload images of historical Nahuatl manuscripts.
+- **Auto-segmentation**: Automatically identify individual glyph elements using AI.
+- **Similarity search**: Find historical archetypes similar to a selected glyph element.
+- **Collaborative annotation**: Mark and identify elements to build a shared dataset.
 
-- **Node.js**: 18.0.0 or higher
-- **Python**: 3.8 or higher
-- **Model weights**: Required `.pt` artifacts must be present in `frontend_integration_fix/frontend_integration/`.
+### How to install
+Please refer to the [INSTALL.md](INSTALL.md) file for step-by-step instructions on setting up the tool on your computer.
 
-## Getting Started
-
-### Backend Setup
-
-The backend serves the ML models via a REST API.
-
-1.  Navigate to the integration directory:
-    ```bash
-    cd frontend_integration_fix/frontend_integration
-    ```
-2.  Install Python dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  Run the Flask API:
-    ```bash
-    python examples/flask_api.py
-    ```
-
-The backend starts at `http://localhost:5000`.
-
-### Frontend Setup
-
-The frontend provides the user interface for interacting with the backend.
-
-1.  Navigate to the frontend directory:
-    ```bash
-    cd codex-frontend
-    ```
-2.  Install dependencies:
-    ```bash
-    npm install
-    ```
-3.  Start the development server:
-    ```bash
-    npm run dev
-    ```
-
-The frontend application will be available at the URL shown in your terminal (typically `http://localhost:5173`).
-
-## Smoke Checks
-
-### Backend Smoke Check
-
-To verify the backend is running and can process images, run the following command while the API is active:
-
+### How to run
+Once installed, you can start both the backend and frontend with a single command:
 ```bash
-curl -s -X POST -F "image=@frontend_integration_fix/frontend_integration/data/glyphs_sample/atl-glyph/026r_a_07-2.jpg" http://localhost:5000/segment
+bash scripts/run-dev.sh
 ```
+This will launch the application in your web browser.
 
-A successful response returns a JSON object containing `num_elements`, `image_size`, and an `elements` array.
+### Screenshots
+*Placeholders for screenshots showing the annotation interface and similarity results.*
 
-### Frontend Smoke Check
+---
 
-Run the following commands in the `codex-frontend` directory:
+## For Developers (Technical)
 
-```bash
-npm ci && npm run build && npm run lint
-```
+### Architecture Overview
+The project follows a decoupled client-server architecture:
+- **Backend**: Flask API serving ML models (DINOv2-ViT-S/14). Runs on port `7117`.
+- **Frontend**: React application built with Vite and Tailwind CSS. Runs on port `7118`.
 
-All commands must exit with code 0 for the smoke check to pass.
+### Environment Variables
+Configure the following in your `.env` file (see `.env.example` if available):
+- `PORT=7117`: Backend port.
+- `HOST=0.0.0.0`: Server host.
+- `CORS_ORIGINS`: Allowed origins for cross-domain requests.
+- `MODEL_DIR`: Path to the machine learning model weights.
+- `VITE_API_BASE_URL=http://localhost:7117`: Frontend setting to point to the backend API.
 
-## Model Artifacts
+### Project Structure
+- `backend/`: Python Flask server and ML pipeline (`backend/examples/flask_api.py`).
+- `frontend/`: React + Vite frontend source code.
+- `scripts/`: Production and utility scripts (e.g., `run-dev.sh`).
+- `dev-scripts/`: Development-only automation and helper scripts.
+- `_legacy/`: Archived previous implementations.
 
-This project relies on several pretrained model weights and prototypes:
+### Development Setup
+1. Follow [INSTALL.md](INSTALL.md) to set up the Python and Node environments.
+2. Launch the development stack:
+   ```bash
+   bash scripts/run-dev.sh
+   ```
 
-- **Classification**: `codex_model/weights/prototypes.pt`, `codex_model/weights/projection.pt`, `prototypes/prototypes.pt`
-- **Segmentation**: `mobile_sam.pt` (used by the MobileSAM wrapper)
-
-These files are treated as external assets and must be present in the `frontend_integration_fix/frontend_integration/` directory. Specifically, `mobile_sam.pt` may need to be downloaded separately if not already present in the expected location (defaulting to `~/.cache/mobile_sam/mobile_sam.pt`).
-
-## Additional Documentation
-
-- [Frontend README](codex-frontend/README.md)
-- [Backend/Integration README](frontend_integration_fix/frontend_integration/README.md)
-
-## What NOT to commit
-
-To maintain a clean repository and avoid security risks, do not commit the following:
-
-- **Local dependencies**: `node_modules/`
-- **Build outputs**: `dist/`, `build/`
-- **Python cache**: `__pycache__/`, `*.pyc`
-- **OS metadata**: `.DS_Store`
-- **Large model weights**: `*.pt` (these are external assets)
-- **Sensitive information**: `.env` files (use `.env.example` as a template instead)
+### Contributing
+Please ensure you follow the established project structure and keep the `_legacy/` directory clean by archiving deprecated modules there.
