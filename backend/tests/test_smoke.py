@@ -1,7 +1,10 @@
+# type: ignore
+# pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUndefinedVariable=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportGeneralTypeIssues=false, reportAttributeAccessIssue=false
+# The test uses dynamic module stubs to avoid importing heavy ML deps in CI; keep
+# diagnostics suppressed for this file.
 import importlib
 import sys
 import types
-import pytest
 
 
 def _insert_stubs():
@@ -25,7 +28,7 @@ def _insert_stubs():
         def classify_batch(self, *args, **kwargs):
             return []
 
-    mod.CodexClassifier = CodexClassifier
+    setattr(mod, "CodexClassifier", CodexClassifier)
     sys.modules["codex_model"] = mod
 
     # codex_pipeline.segmentation stub
@@ -42,7 +45,7 @@ def _insert_stubs():
         def extract_crops(self, img, proposals):
             return []
 
-    seg_mod.MobileSAMSegmenter = MobileSAMSegmenter
+    setattr(seg_mod, "MobileSAMSegmenter", MobileSAMSegmenter)
     sys.modules["codex_pipeline"] = pkg
     sys.modules["codex_pipeline.segmentation"] = seg_mod
 
@@ -51,7 +54,7 @@ def _insert_stubs():
         import PIL  # type: ignore
     except Exception:
         pil_mod = types.ModuleType("PIL")
-        pil_mod.Image = types.SimpleNamespace(open=lambda *a, **k: None)
+        setattr(pil_mod, "Image", types.SimpleNamespace(open=lambda *a, **k: None))
         sys.modules["PIL"] = pil_mod
 
     # Flask stub if flask isn't installed in the test environment
@@ -97,11 +100,11 @@ def _insert_stubs():
 
                 return Client()
 
-        flask_stub.Flask = Flask
-        flask_stub.jsonify = lambda x: x
+        setattr(flask_stub, "Flask", Flask)
+        setattr(flask_stub, "jsonify", lambda x: x)
         # Minimal request and send_file placeholders
-        flask_stub.request = types.SimpleNamespace(headers={}, args={}, files={})
-        flask_stub.send_file = lambda path: path
+        setattr(flask_stub, "request", types.SimpleNamespace(headers={}, args={}, files={}))
+        setattr(flask_stub, "send_file", lambda path: path)
         sys.modules["flask"] = flask_stub
 
 
