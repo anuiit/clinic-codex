@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { SegmentResult, ClassifyResult, ClassesResult, SimilarResult, TrustResult } from '../types';
+import type { SegmentResult, ClassifyResult, ClassesResult, SimilarResult, TrustResult, SaveAnnotationPayload, SaveAnnotationResponse } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:7117';
 
@@ -42,4 +42,19 @@ export async function getTrust(imageDataUrl: string, bbox: [number, number, numb
     top_k: topK,
   });
   return data;
+}
+
+export async function saveAnnotation(
+  payload: SaveAnnotationPayload
+): Promise<SaveAnnotationResponse> {
+  const res = await fetch(`${BASE_URL}/save-annotation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`save-annotation failed: ${res.status} ${errText}`);
+  }
+  return res.json();
 }
