@@ -34,6 +34,26 @@ export function updateAnnotations(id: string, annotations: Record<number, string
   }
 }
 
+export function updateElements(id: string, elements: AnalysisRecord['result']['elements']): boolean {
+  const history = getHistory();
+  const idx = history.findIndex((r) => r.id === id);
+  if (idx === -1) return false;
+  try {
+    history[idx] = { 
+      ...history[idx], 
+      result: {
+        ...history[idx].result,
+        elements,
+        num_elements: elements.length
+      } 
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function deleteAnalysis(id: string): void {
   const filtered = getHistory().filter((r) => r.id !== id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));

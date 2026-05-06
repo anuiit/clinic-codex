@@ -138,6 +138,9 @@ Wave 3 (Full editor + production polish):
 ├── Task 15: Handle dense/tiny/overlapping-region edge cases in the workspace [deep]
 └── Task 16: Manual browser QA pass and issue cleanup [unspecified-high]
 
+Wave 4 (Cleanup + verification prep):
+├── Task 17: Final frontend hygiene cleanup [quick]
+
 Wave FINAL:
 ├── Task F1: Plan compliance audit [oracle]
 ├── Task F2: Code quality review [unspecified-high]
@@ -161,12 +164,14 @@ Wave FINAL:
 - **13**: 3, 5, 9, 12 - 16
 - **14**: 1, 2, 4, 6, 8 - 16
 - **15**: 3, 6, 7 - 16
-- **16**: 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 - F1-F4
+- **16**: 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 - 17
+- **17**: 9, 12, 16 - F1-F4
 
 ### Agent Dispatch Summary
 - **Wave 1**: T1/T2 → `visual-engineering`, T3/T5 → `deep`, T4 → `writing`
 - **Wave 2**: T6/T8 → `visual-engineering`, T7/T9 → `deep`, T10/T11 → `quick`
 - **Wave 3**: T12/T14 → `visual-engineering`, T13 → `quick`, T15 → `deep`, T16 → `unspecified-high`
+- **Wave 4**: T17 → `quick`
 - **FINAL**: F1 → `oracle`, F2 → `unspecified-high`, F3 → `unspecified-high`, F4 → `deep`
 
 ---
@@ -592,7 +597,7 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-8-selected-details.png
   ```
 
-- [ ] 9. Add inline relabel/status editing with immediate persistence feedback
+- [x] 9. Add inline relabel/status editing with immediate persistence feedback
 
   **What to do**:
   - Add inline controls to relabel or change status for the selected region directly in the workspace.
@@ -647,7 +652,7 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-9-inline-save-error.png
   ```
 
-- [ ] 10. Refine history switching, search, and toggle behavior around the active analysis
+- [x] 10. Refine history switching, search, and toggle behavior around the active analysis
 
   **What to do**:
   - Ensure history toggle/search/select flows work smoothly in the more compact layout.
@@ -699,7 +704,7 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-10-history-delete.png
   ```
 
-- [ ] 11. Add baseline keyboard and focus navigation for region review
+- [x] 11. Add baseline keyboard and focus navigation for region review
 
   **What to do**:
   - Support predictable keyboard focus for the region list/panel.
@@ -751,7 +756,7 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-11-focus-stability.png
   ```
 
-- [ ] 12. Redesign the full annotation page so it works for all detections
+- [x] 12. Redesign the full annotation page so it works for all detections
 
   **What to do**:
   - Update `AnnotationPage` from a rejected-only repair screen into a full editor for any detection.
@@ -805,7 +810,7 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-12-full-editor-save.png
   ```
 
-- [ ] 13. Preserve focused-region handoff and return flow between workspace and full editor
+- [x] 13. Preserve focused-region handoff and return flow between workspace and full editor
 
   **What to do**:
   - Open the full editor from the currently focused region when available.
@@ -857,7 +862,7 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-13-return-flow.png
   ```
 
-- [ ] 14. Polish pane balance, compact styling, and production visual density
+- [x] 14. Polish pane balance, compact styling, and production visual density
 
   **What to do**:
   - Reduce heavy borders/radii/padding and remove “box-in-box” feel.
@@ -909,7 +914,7 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-14-action-discovery.png
   ```
 
-- [ ] 15. Handle dense, tiny, and overlapping-region edge cases in the workspace
+- [x] 15. Handle dense, tiny, and overlapping-region edge cases in the workspace
 
   **What to do**:
   - Improve selection usability for tiny or overlapping boxes.
@@ -961,7 +966,7 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-15-overlap-fallback.png
   ```
 
-- [ ] 16. Run a manual browser QA pass and resolve production-workspace issues
+- [x] 16. Run a manual browser QA pass and resolve production-workspace issues
 
   **What to do**:
   - Launch frontend and backend and exercise the redesigned workspace end-to-end.
@@ -1019,21 +1024,133 @@ Wave FINAL:
     Evidence: .sisyphus/evidence/task-16-refresh-stability.png
   ```
 
+- [x] 17. Apply final frontend hygiene cleanup from verification feedback
+
+  **What to do**:
+  - **T17.1** — Remove dead `panOffset` state from `WorkspacePage.tsx` (declared at line ~125, reset at ~146-151 and ~781, never applied to rendering). Add a comment if removal is partial.
+  - **T17.2** — Replace silent catch around `getClasses()` in `WorkspacePage.tsx` (line ~183-189) with `console.warn` or minimal observable handling consistent with existing UI patterns.
+  - **T17.3** — Remove redundant state update in `handleInlineRelabel` (`WorkspacePage.tsx` line ~459-491): it sets `records`/`currentRecord` directly AND calls `syncRecords` which sets them again. Keep the single source of truth.
+  - **T17.4** — Fix `resetInspectionState` dependency array (`WorkspacePage.tsx` line ~138-153) to prevent unnecessary re-renders. Use functional state updates or ref-based patterns.
+  - **T17.5** — Remove `console.error` from `AnnotationPage.tsx` `loadData()` (line ~46-52). The UI already shows `classesError` state; no need for console noise.
+  - **T17.6** — Add explicit `type="button"` on **all buttons** in `AnnotationPage.tsx` that lack it (save button at line ~118-125, suggestion buttons at line ~216-223).
+  - **T17.7** — Fix `saving` state bug in `AnnotationPage.tsx` `handleSave` (line ~94-107): call `setSaving(false)` on the success path before `navigate('/')`.
+
+  **Must NOT do**:
+  - Do NOT refactor shared state architecture beyond these 7 targeted fixes.
+  - Do NOT add new notifications, retry flows, or broader UX changes.
+  - Do NOT change backend APIs, model behavior, or route structure.
+  - Do NOT run formatting-only changes (prettier/eslint --fix) unless a line is already touched for a real fix.
+  - Do NOT fix silent catches or missing `type="button"` outside the two specified files.
+  - Do NOT touch CSS/styling.
+
+  **Guardrails**:
+  - Make the SMALLEST possible change per issue (≤5 lines preferred, ≤10 lines max).
+  - Run `tsc --noEmit` after EACH individual fix.
+  - Run app smoke test after EACH fix: WorkspacePage (upload → analyze → click overlay → relabel → save) and AnnotationPage (load → edit → save → navigate back).
+  - STOP and escalate if any fix requires >10 lines or breaks `tsc --noEmit` / smoke test.
+
+  **Recommended Agent Profile**:
+  - **Category**: `quick`
+  - **Skills**: `[]`
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 4
+  - **Blocks**: F1, F2, F3, F4
+  - **Blocked By**: 9, 12, 16
+
+  **References**:
+  - `codex-frontend/src/pages/WorkspacePage.tsx` - inline relabel flow, class loading path, and unused interaction state to simplify without changing UX.
+  - `codex-frontend/src/pages/AnnotationPage.tsx` - save lifecycle, class-load error handling, and button semantics to clean up.
+  - Final verification findings (F2) - source of the six minor cleanup items.
+
+  **Acceptance Criteria**:
+  - [ ] T17.1: `panOffset` state removed from `WorkspacePage.tsx`; `grep 'panOffset'` returns only comments or zero matches.
+  - [ ] T17.2: Silent catch in `WorkspacePage.tsx` (~line 183-189) replaced with `console.warn` or minimal observable handling.
+  - [ ] T17.3: `handleInlineRelabel` no longer performs redundant state updates before calling `syncRecords`.
+  - [ ] T17.4: `resetInspectionState` dependency array fixed to prevent unnecessary re-renders.
+  - [ ] T17.5: `console.error` removed from `AnnotationPage.tsx` `loadData()` (~line 46-52).
+  - [ ] T17.6: All buttons in `AnnotationPage.tsx` missing `type="button"` now have it (save + suggestion buttons).
+  - [ ] T17.7: `handleSave` in `AnnotationPage.tsx` calls `setSaving(false)` on success path before `navigate('/')`.
+  - [ ] `tsc --noEmit` passes with zero errors after all fixes.
+  - [ ] `npm run lint` passes on modified files with zero new warnings.
+  - [ ] Bundle size does not increase (or increases by <0.1KB).
+
+  **QA Scenarios**:
+  ```
+  Scenario: Inline relabel remains stable after cleanup
+    Tool: Playwright
+    Preconditions: Active record loaded with at least one region
+    Steps:
+      1. Select a region in the workspace
+      2. Change its label inline
+      3. Refresh the page and reopen the same record
+    Expected Result: The updated label persists and no duplicate-refresh regression appears
+    Evidence: .sisyphus/evidence/task-17-inline-relabel-stability.png
+
+  Scenario: Annotation save flow resets cleanly
+    Tool: Playwright
+    Preconditions: Open a valid annotation editor record
+    Steps:
+      1. Change a label in `/annotate/:id`
+      2. Click Save
+      3. Observe navigation and button lifecycle
+    Expected Result: Save completes cleanly, returns to workspace, and the button is not left in a stuck loading state
+    Evidence: .sisyphus/evidence/task-17-annotation-save-flow.png
+  ```
+
 ---
 
-## Final Verification Wave
+## Final Verification Wave (Post-T17)
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
-  Verify the redesigned workspace is image-first, compact, clickable on-canvas, zoomable, history-secondary, and annotation-capable for all detections while preserving the full editor route.
+> **Note**: F1-F4 are manual verification checklists, not executable test suites. Each must be completed by an agent with access to the codebase and browser.
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
-  Run build/lint and inspect interaction-state ownership, overlay hit testing, persistence logic, and route handoff quality.
+- [x] F1. **Plan Compliance Audit** — `oracle`
+  Read `WorkspacePage.tsx` and `AnnotationPage.tsx`. Verify:
+  - Image is the dominant workspace surface (canvas > side chrome)
+  - History sidebar is collapsible with toggle control
+  - Overlay canvas is clickable and drives panel focus
+  - Region panel is compact (single-row unselected, expanded focused)
+  - Inline relabel works for any detection regardless of confidence
+  - Full editor route `/annotate/:id` is preserved and improved
+  - No KPI cards or hero copy in primary viewport
+  Return: `PASS` or `FAIL` with specific line references for any gap.
 
-- [ ] F3. **Real Manual QA** — `unspecified-high`
-  Execute production workflows in the browser: upload, inspect, zoom, select, inline edit, full edit, switch history, reload.
+- [x] F2. **Code Quality Review** — `unspecified-high`
+  Run these commands and inspect results:
+  ```bash
+  cd codex-frontend && npm run build
+  cd codex-frontend && npm run lint
+  cd codex-frontend && npx tsc --noEmit
+  ```
+  Also read both files for:
+  - `as any`, `@ts-ignore`, empty catches (outside the one intentionally fixed in T17.2)
+  - Leftover TODO/FIXME/HACK
+  - Interaction state ownership (zoom, focusedIdx, historyOpen in one place)
+  - Overlay hit-testing correctness
+  - Persistence logic correctness (`updateAnnotations` return value checked)
+  Return: `PASS` or `FAIL` with command outputs and file:line references.
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
-  Confirm the work stays within frontend UX redesign scope and does not drift into backend/model changes or full inline geometry editing.
+- [x] F3. **Real Manual QA** — `unspecified-high` (+ `playwright` skill)
+  Launch frontend dev server. Use Playwright to verify:
+  - `/` loads with compact chrome, no console errors (CORS expected if backend off)
+  - History rail collapses/expands
+  - `/annotate/fake-id` shows graceful "not found" state
+  - Upload file input is present and wired
+  - Zoom controls exist when image loaded
+  - Region panel is scrollable and compact
+  Return: `PASS` or `FAIL` with screenshots saved to `.sisyphus/evidence/final-qa/`.
+
+- [x] F4. **Scope Fidelity Check** — `deep`
+  Read these files and confirm NO scope violations:
+  - `codex-frontend/src/pages/WorkspacePage.tsx` — frontend only, no backend changes
+  - `codex-frontend/src/pages/AnnotationPage.tsx` — frontend only
+  - `codex-frontend/src/App.tsx` — routes unchanged except legacy redirects
+  - `codex-frontend/src/services/api.ts` — no new endpoints
+  - `codex-frontend/src/services/storage.ts` — no new storage methods
+  - `codex-frontend/package.json` — no new dependencies
+  Reject if: backend API redesign, model/threshold changes, inline geometry editing, app-wide redesign outside workspace/annotation, new heavy UI framework, or new dependencies added.
+  Return: `PASS` or `FAIL` with specific violations found.
 
 ---
 
@@ -1043,6 +1160,14 @@ Wave FINAL:
 - Commit 2: image stage + clickable overlay + compact region panel
 - Commit 3: inline annotation + full editor improvements + handoff flow
 - Commit 4: QA-driven fixes and polish only if needed
+- Commit 5 (T17): Atomic hygiene fixes — one commit per micro-fix:
+  - `T17.1: Remove dead panOffset state`
+  - `T17.2: Replace silent getClasses catch with console.warn`
+  - `T17.3: Remove redundant state update in handleInlineRelabel`
+  - `T17.4: Fix resetInspectionState dependency array`
+  - `T17.5: Remove console.error from AnnotationPage loadData`
+  - `T17.6: Add type="button" to AnnotationPage buttons`
+  - `T17.7: Fix saving state bug in AnnotationPage handleSave`
 
 ---
 

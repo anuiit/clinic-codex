@@ -25,3 +25,8 @@
 - Fix broken back/return routes: `/analysis/${id}` → `/`
 - Fix `/dashboard` link → `/`
 - Pre-fill all elements (not just rejected) with existing annotation or class_name
+
+## [2026-05-05] Task 15
+
+- Keep dense-region disambiguation inside existing single-click selection behavior by preferring the smallest overlapping bbox instead of adding cycle state or new gestures.
+- Keep the region panel row click as the explicit fallback disambiguation path rather than adding new overlay UI or editing affordances.

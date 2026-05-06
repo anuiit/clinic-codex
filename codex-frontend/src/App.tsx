@@ -22,11 +22,8 @@ function LegacyAnalysisRedirect() {
 function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-stone-950 text-stone-100">
-        <nav className="border-b border-stone-800/80 bg-stone-950/90 px-6 py-4 backdrop-blur">
-          <span className="font-bold text-amber-400 text-lg tracking-wide">Codex Analyzer</span>
-        </nav>
-        <main className="mx-auto max-w-[1700px] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="h-screen w-screen overflow-hidden flex flex-col bg-stone-950 text-stone-100 p-4">
+        <main className="flex-1 overflow-hidden rounded-xl">
           <Routes>
             <Route path="/" element={<WorkspacePage />} />
             <Route path="/dashboard" element={<Navigate to="/" replace />} />

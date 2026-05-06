@@ -1,53 +1,9 @@
 {
-  "active_plan": "/home/sina/omxpro/clinic-codex/.sisyphus/plans/workspace-ui-redesign.md",
-  "started_at": "2026-05-04T23:31:58.391Z",
+  "active_plan": "/home/sina/omxpro/clinic-codex/.sisyphus/plans/codex-cleanup-and-polish.md",
+  "started_at": "2026-05-06T10:25:54.468Z",
   "session_ids": [
-    "ses_20d48c66bffeHfLVSuNTbjZv7a",
-    "ses_20aa7ea49ffeURd3yXbslb8z1b",
-    "ses_20aa5c45effe4wT3f8tEZQZkq7",
-    "ses_20aa38abeffecShdUe4s61T8n6",
-    "ses_20a9f0ffcffeo6QtpX33gHpjTX",
-    "ses_20a9cdc0effecdNjJxeOgPwfk3",
-    "ses_20a9b15bbffeAL1tEJ0NwqZT8Y"
+    "ses_20348f627ffe1LjremVnAktZOR"
   ],
-  "plan_name": "workspace-ui-redesign",
-  "agent": "atlas",
-  "task_sessions": {
-    "todo:1": {
-      "task_key": "todo:1",
-      "task_label": "1",
-      "task_title": "Replace the current hero/KPI shell with compact production chrome",
-      "session_id": "ses_20aa38abeffecShdUe4s61T8n6",
-      "agent": "Sisyphus-Junior",
-      "category": "visual-engineering",
-      "updated_at": "2026-05-04T23:42:04.503Z"
-    },
-    "todo:6": {
-      "task_key": "todo:6",
-      "task_label": "6",
-      "task_title": "Build the image-first canvas stage with floating zoom and overlay controls",
-      "session_id": "ses_20a9f0ffcffeo6QtpX33gHpjTX",
-      "agent": "Sisyphus-Junior",
-      "category": "visual-engineering",
-      "updated_at": "2026-05-04T23:45:55.779Z"
-    },
-    "todo:7": {
-      "task_key": "todo:7",
-      "task_label": "7",
-      "task_title": "Make overlay boxes directly clickable and synchronized with the detail panel",
-      "session_id": "ses_20a9cdc0effecdNjJxeOgPwfk3",
-      "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "updated_at": "2026-05-04T23:47:52.172Z"
-    },
-    "todo:8": {
-      "task_key": "todo:8",
-      "task_label": "8",
-      "task_title": "Replace bulky proposal cards with a compact contextual region panel",
-      "session_id": "ses_20a9b15bbffeAL1tEJ0NwqZT8Y",
-      "agent": "Sisyphus-Junior",
-      "category": "visual-engineering",
-      "updated_at": "2026-05-04T23:50:15.445Z"
-    }
-  }
+  "plan_name": "codex-cleanup-and-polish",
+  "agent": "atlas"
 }

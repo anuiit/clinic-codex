@@ -26,6 +26,40 @@ export interface ClassesResult {
   class_names: string[];
 }
 
+export interface SimilarItem {
+  rank: number;
+  match_type: string;
+  class_name: string;
+  class_label: number;
+  similarity: number;
+  band: 'high' | 'moderate' | 'low';
+  asset: string | null;
+}
+
+export interface SimilarResult {
+  query: { bbox: [number, number, number, number]; mode: string };
+  best_match: { class_name: string; similarity: number; rejected: boolean };
+  results: SimilarItem[];
+}
+
+export interface TrustSignals {
+  predicted_class_rank: number;
+  predicted_class_similarity: number;
+  top1_class: string;
+  top1_similarity: number;
+  margin_to_second: number;
+  above_rejection_threshold: boolean;
+  rejection_threshold: number;
+  ambiguous: boolean;
+  entropy: number;
+  top_k: TopKItem[];
+}
+
+export interface TrustResult {
+  query: { bbox: [number, number, number, number]; predicted_class: string };
+  trust: TrustSignals;
+}
+
 export interface AnalysisRecord {
   id: string;
   imageName: string;

@@ -3,8 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
+  ChevronLeft,
   Edit3,
   ImagePlus,
   Info,
@@ -18,11 +17,26 @@ import {
   ZoomOut,
   Maximize2,
 } from 'lucide-react';
-import { segmentGlyph } from '../services/api';
+import { segmentGlyph, getTrust } from '../services/api';
+import { appText } from '../i18n/text';
 import { deleteAnalysis, getHistory, saveAnalysis } from '../services/storage';
-import type { AnalysisRecord, DetectedElement } from '../types';
+import type { AnalysisRecord, TrustResult } from '../types';
 
 type OverlayMode = 'all' | 'focused' | 'hidden';
+
+function getCropPreviewSize(bbox: [number, number, number, number], maxSize: number) {
+  const [, , boxWidth, boxHeight] = bbox;
+  let width = maxSize;
+  let height = maxSize;
+
+  if (boxWidth >= boxHeight) {
+    height = Math.max(1, maxSize * (boxHeight / boxWidth));
+  } else {
+    width = Math.max(1, maxSize * (boxWidth / boxHeight));
+  }
+
+  return { width, height };
+}
 
 function resolveCurrentRecord(records: AnalysisRecord[], preferredId?: string | null) {
   if (preferredId) {
@@ -30,67 +44,6 @@ function resolveCurrentRecord(records: AnalysisRecord[], preferredId?: string | 
   }
 
   return records[0] ?? null;
-}
-
-function drawOverlay(
-  ctx: CanvasRenderingContext2D,
-  elements: DetectedElement[],
-  imageSize: [number, number],
-  canvasSize: { width: number; height: number },
-  hoveredIdx: number | null,
-  focusedIdx: number | null,
-  overlayMode: OverlayMode,
-) {
-  const { width, height } = canvasSize;
-  ctx.clearRect(0, 0, width, height);
-
-  if (overlayMode === 'hidden') {
-    return;
-  }
-
-  const [origW, origH] = imageSize;
-  const scaleX = width / origW;
-  const scaleY = height / origH;
-
-  elements.forEach((el, idx) => {
-    if (overlayMode === 'focused' && focusedIdx !== null && focusedIdx !== idx) {
-      return;
-    }
-
-    const [x, y, w, h] = el.bbox;
-    const scaledX = x * scaleX;
-    const scaledY = y * scaleY;
-    const scaledW = w * scaleX;
-    const scaledH = h * scaleY;
-
-    let strokeColor = el.rejected ? '#ef4444' : '#f59e0b';
-    let lineWidth = 2;
-    let badgeColor = el.rejected ? '#ef4444' : '#f59e0b';
-    const textColor = '#0c0a09';
-
-    if (idx === focusedIdx) {
-      strokeColor = '#ffffff';
-      lineWidth = 3;
-      badgeColor = '#ffffff';
-    } else if (idx === hoveredIdx) {
-      strokeColor = '#fbbf24';
-      lineWidth = 2.5;
-      badgeColor = '#fbbf24';
-    }
-
-    ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = lineWidth;
-    ctx.strokeRect(scaledX, scaledY, scaledW, scaledH);
-
-    ctx.fillStyle = badgeColor;
-    ctx.fillRect(scaledX, Math.max(0, scaledY - 24), 28, 24);
-
-    ctx.fillStyle = textColor;
-    ctx.font = 'bold 14px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`${idx}`, scaledX + 14, Math.max(0, scaledY - 24) + 12);
-  });
 }
 
 export default function WorkspacePage() {
@@ -109,23 +62,24 @@ export default function WorkspacePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [expandedItems, setExpandedItems] = useState<Record<number, boolean>>({});
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [historyOpen, setHistoryOpen] = useState(() => !resolveCurrentRecord(getHistory(), initialPreferredId));
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('all');
+  const [trustData, setTrustData] = useState<TrustResult | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const currentFileRef = useRef<File | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const cropCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
+  const detailCanvasRef = useRef<HTMLCanvasElement>(null);
+  const t = appText.workspace;
 
   const resetInspectionState = useCallback(() => {
     cropCanvasRefs.current = [];
-    setExpandedItems({});
     setHoveredIdx(null);
     setFocusedIdx(null);
     if (zoom !== 1) {
@@ -140,11 +94,7 @@ export default function WorkspacePage() {
   const selectRecord = useCallback((record: AnalysisRecord | null) => {
     resetInspectionState();
     setCurrentRecord(record);
-    const nextHistoryOpen = !record;
-    if (historyOpen !== nextHistoryOpen) {
-      setHistoryOpen(nextHistoryOpen);
-    }
-  }, [historyOpen, resetInspectionState]);
+  }, [resetInspectionState]);
 
   const syncRecords = useCallback((preferredId?: string | null) => {
     const nextRecords = getHistory();
@@ -159,52 +109,38 @@ export default function WorkspacePage() {
   }, [location.pathname, navigate, searchParams]);
 
   useEffect(() => {
-    if (!currentRecord || !canvasRef.current || !imageRef.current) {
+    if (!currentRecord || !imageRef.current) {
       return;
     }
 
     const image = imageRef.current;
 
-    const drawAllCanvases = () => {
-      const canvas = canvasRef.current;
+    const drawCrop = (canvas: HTMLCanvasElement | null, element: AnalysisRecord['result']['elements'][number]) => {
       if (!canvas) {
         return;
       }
 
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
+      const cropCtx = canvas.getContext('2d');
+      if (!cropCtx) {
         return;
       }
 
-      const { width, height } = image.getBoundingClientRect();
-      canvas.width = width;
-      canvas.height = height;
+      const [x, y, w, h] = element.bbox;
+      cropCtx.clearRect(0, 0, canvas.width, canvas.height);
+      cropCtx.drawImage(image, x, y, w, h, 0, 0, canvas.width, canvas.height);
+    };
 
-      drawOverlay(
-        ctx,
-        currentRecord.result.elements,
-        currentRecord.result.image_size,
-        { width, height },
-        hoveredIdx,
-        focusedIdx,
-        overlayMode,
-      );
-
+    const drawAllCanvases = () => {
       currentRecord.result.elements.forEach((element, idx) => {
-        const cropCanvas = cropCanvasRefs.current[idx];
-        if (!cropCanvas) {
-          return;
-        }
-
-        const cropCtx = cropCanvas.getContext('2d');
-        if (!cropCtx) {
-          return;
-        }
-
-        const [x, y, w, h] = element.bbox;
-        cropCtx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
-        cropCtx.drawImage(image, x, y, w, h, 0, 0, cropCanvas.width, cropCanvas.height);
+        drawCrop(cropCanvasRefs.current[idx], element);
       });
+
+      if (focusedIdx !== null) {
+        const focusedElement = currentRecord.result.elements[focusedIdx];
+        if (focusedElement) {
+          drawCrop(detailCanvasRef.current, focusedElement);
+        }
+      }
     };
 
     if (image.complete) {
@@ -218,7 +154,30 @@ export default function WorkspacePage() {
       image.removeEventListener('load', drawAllCanvases);
       window.removeEventListener('resize', drawAllCanvases);
     };
-  }, [currentRecord, focusedIdx, hoveredIdx, overlayMode]);
+  }, [currentRecord, focusedIdx]);
+
+  useEffect(() => {
+    if (focusedIdx === null || !currentRecord) {
+      return;
+    }
+
+    const element = currentRecord.result.elements[focusedIdx];
+    if (!element) return;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- standard fetch-loading pattern
+    setContextLoading(true);
+
+    getTrust(currentRecord.imageDataUrl, element.bbox, element.class_name, 10)
+      .then((trust) => {
+        setTrustData(trust);
+      })
+      .catch(() => {
+        setTrustData(null);
+      })
+      .finally(() => {
+        setContextLoading(false);
+      });
+  }, [focusedIdx, currentRecord]);
 
   const filteredRecords = useMemo(() => {
     if (!filter) {
@@ -282,6 +241,16 @@ export default function WorkspacePage() {
     reader.readAsDataURL(nextFile);
   }, []);
 
+  const clearPendingFile = useCallback(() => {
+    currentFileRef.current = null;
+    setFile(null);
+    setPreview(null);
+    setError(null);
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+  }, []);
+
   const onDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragging(false);
@@ -312,8 +281,9 @@ export default function WorkspacePage() {
 
       saveAnalysis(record);
       syncRecords(record.id);
+      clearPendingFile();
     } catch (issue) {
-      setError(issue instanceof Error ? issue.message : 'API error — is the Flask server running on port 5000?');
+      setError(issue instanceof Error ? issue.message : t.apiError);
     } finally {
       setLoading(false);
     }
@@ -323,36 +293,6 @@ export default function WorkspacePage() {
     deleteAnalysis(id);
     syncRecords(currentRecord?.id === id ? null : currentRecord?.id);
   };
-
-  const toggleExpand = (idx: number) => {
-    setExpandedItems((previous) => ({ ...previous, [idx]: !previous[idx] }));
-  };
-
-  const getElementIndexFromCanvasPoint = useCallback((offsetX: number, offsetY: number) => {
-    if (!currentRecord || !imageRef.current) {
-      return null;
-    }
-
-    const { width: renderedWidth, height: renderedHeight } = imageRef.current.getBoundingClientRect();
-    const [origW, origH] = currentRecord.result.image_size;
-
-    if (!renderedWidth || !renderedHeight || !origW || !origH) {
-      return null;
-    }
-
-    const imageX = offsetX / (renderedWidth / origW);
-    const imageY = offsetY / (renderedHeight / origH);
-    let matchedIdx: number | null = null;
-
-    currentRecord.result.elements.forEach((element, idx) => {
-      const [x, y, w, h] = element.bbox;
-      if (imageX >= x && imageX <= x + w && imageY >= y && imageY <= y + h) {
-        matchedIdx = idx;
-      }
-    });
-
-    return matchedIdx;
-  }, [currentRecord]);
 
   const handleEditorHandoff = () => {
     if (!currentRecord) {
@@ -367,13 +307,30 @@ export default function WorkspacePage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div
+      className={`space-y-6 rounded-2xl transition-colors ${dragging ? 'ring-2 ring-amber-400/60 ring-offset-2 ring-offset-stone-950' : ''}`}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
+          return;
+        }
+        setDragging(false);
+      }}
+      onDrop={onDrop}
+    >
       <section className="flex flex-col gap-3 rounded-2xl border border-stone-800 bg-stone-900/80 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3 px-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500 text-stone-950">
             <ImagePlus size={18} />
           </div>
-          <span className="font-semibold tracking-tight text-stone-100">Codex Glyph Analyzer</span>
+          <span className="font-semibold tracking-tight text-stone-100">{t.appTitle}</span>
         </div>
 
         <div className="flex flex-1 items-center justify-end gap-3">
@@ -386,12 +343,6 @@ export default function WorkspacePage() {
 
           <div
             className={`flex items-center gap-3 rounded-xl border border-dashed px-4 py-2 transition-colors ${dragging ? 'border-amber-400 bg-amber-400/10' : 'border-stone-700/80 bg-stone-950/60 hover:border-stone-500'}`}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
             onClick={() => inputRef.current?.click()}
             role="button"
             tabIndex={0}
@@ -410,7 +361,7 @@ export default function WorkspacePage() {
             />
             {preview ? (
               <div className="flex items-center gap-3">
-                <img src={preview} alt="Preview" className="h-8 w-8 rounded object-cover" />
+                <img src={preview} alt={t.previewAlt} className="h-8 w-8 rounded object-cover" />
                 <div className="flex flex-col">
                   <span className="max-w-[120px] truncate text-xs font-medium text-stone-100">{file?.name}</span>
                 </div>
@@ -423,68 +374,118 @@ export default function WorkspacePage() {
                   disabled={loading}
                   className="ml-2 inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 text-xs font-semibold text-stone-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
                 >
-                  {loading ? <><Loader2 size={14} className="animate-spin" /> Analyzing…</> : <>Analyze</>}
+                  {loading ? <><Loader2 size={14} className="animate-spin" /> {t.analyzing}</> : <>{t.analyze}</>}
                 </button>
               </div>
             ) : (
               <div className="flex items-center gap-2 text-sm text-stone-400">
                 <Upload size={16} />
-                <span>Drop a glyph image here (PNG, JPG, BMP) or click to browse</span>
+                <span>{t.uploadPrompt}</span>
               </div>
             )}
           </div>
         </div>
       </section>
 
+      {preview && file && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/80 p-6 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-[28px] border border-stone-800 bg-stone-900 p-5 shadow-[0_30px_90px_rgba(0,0,0,0.45)]">
+            <div className="flex items-start justify-between gap-4 border-b border-stone-800 pb-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.24em] text-stone-500">{t.uploadModalTitle}</p>
+                <h2 className="mt-1 truncate text-lg font-semibold text-stone-100">{file.name}</h2>
+                <p className="mt-1 text-sm text-stone-400">{t.uploadModalDescription}</p>
+              </div>
+              <button
+                type="button"
+                onClick={clearPendingFile}
+                disabled={loading}
+                className="rounded-xl border border-stone-700 px-3 py-2 text-sm font-semibold text-stone-300 transition-colors hover:border-stone-500 hover:text-stone-100 disabled:opacity-50"
+              >
+                {t.cancel}
+              </button>
+            </div>
+
+            <div className="my-5 flex max-h-[46vh] items-center justify-center overflow-hidden rounded-2xl border border-stone-800 bg-stone-950">
+              <img src={preview} alt={t.previewAlt} className="max-h-[46vh] max-w-full object-contain" />
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={clearPendingFile}
+                disabled={loading}
+                className="rounded-xl border border-stone-700 px-4 py-2 text-sm font-semibold text-stone-300 transition-colors hover:border-stone-500 hover:text-stone-100 disabled:opacity-50"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={analyze}
+                disabled={loading}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-2 text-sm font-bold text-stone-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+              >
+                {loading ? <><Loader2 size={16} className="animate-spin" /> {t.analyzing}</> : t.analyze}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className={`grid gap-6 transition-all duration-300 ${historyOpen ? 'xl:grid-cols-[340px_minmax(0,1fr)]' : 'xl:grid-cols-[64px_minmax(0,1fr)]'}`}>
         <aside className={`flex flex-col transition-all duration-300 ${historyOpen ? 'rounded-[28px] border border-stone-800 bg-stone-900/80 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.18)] sm:p-5' : 'items-center rounded-[24px] border border-stone-800 bg-stone-900/80 py-4 shadow-sm'}`}>
               {!historyOpen ? (
-                <>
-                  <div className="relative flex flex-col items-center">
-                    <button
-                      type="button"
-                      onClick={() => setHistoryOpen(true)}
-                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-950 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100"
-                      title="Expand history"
-                    >
-                      <PanelLeftOpen size={18} />
-                    </button>
+                <div className="flex flex-col items-center w-full h-full overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen(true)}
+                    className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-950 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100 shrink-0"
+                    title={t.expandHistory}
+                  >
+                    <PanelLeftOpen size={18} />
+                  </button>
 
-                    {/* subtle count badge for collapsed rail */}
-                    <div className="mt-2">
-                      <span className="inline-flex items-center justify-center rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-stone-950">{records.length}</span>
-                    </div>
+                  <div className="my-3 h-px w-8 bg-stone-800 shrink-0" />
+
+                  <div className="flex-1 flex flex-col items-center gap-2 overflow-y-auto w-full px-1 py-1">
+                    {records.map((record) => (
+                      <button
+                        key={record.id}
+                        type="button"
+                        onClick={() => selectRecord(record)}
+                        className={`relative rounded-lg overflow-hidden border transition-all hover:scale-105 ${
+                          currentRecord?.id === record.id
+                            ? 'border-amber-500/60 shadow-[0_0_0_1px_rgba(245,158,11,0.25)]'
+                            : 'border-stone-800 hover:border-stone-600'
+                        }`}
+                        title={record.imageName}
+                      >
+                        <img
+                          src={record.imageDataUrl}
+                          alt={record.imageName}
+                          className="h-10 w-10 object-cover"
+                        />
+                      </button>
+                    ))}
                   </div>
-
-                  <div className="my-4 h-px w-6 bg-stone-800" />
-                  <div className="text-[10px] uppercase tracking-widest text-stone-500" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>
-                    History
-                  </div>
-
-                  {currentRecord && (
-                    <div className="mt-4 flex flex-1 flex-col items-center gap-2">
-                      <div className="h-px w-6 bg-stone-800" />
-                      <img src={currentRecord.imageDataUrl} alt="Current" className="mt-2 h-8 w-8 rounded-lg border border-amber-500/50 object-cover opacity-80 shadow-[0_0_0_1px_rgba(245,158,11,0.25)]" title={currentRecord.imageName} />
-                    </div>
-                  )}
-                </>
+                </div>
               ) : (
             <>
               <div className="mb-4 flex items-start justify-between gap-3 border-b border-stone-800 pb-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-stone-500">Analysis history</p>
-                  <h2 className="mt-1 text-lg font-semibold text-stone-100">Saved runs</h2>
+                  <p className="text-xs uppercase tracking-[0.24em] text-stone-500">{t.analysisHistory}</p>
+                  <h2 className="mt-1 text-lg font-semibold text-stone-100">{t.savedRuns}</h2>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="rounded-xl border border-stone-800 bg-stone-950/70 px-3 py-1.5 text-right">
-                    <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500">Items</div>
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500">{t.items}</div>
                     <div className="text-base font-semibold leading-tight text-stone-100">{filteredRecords.length}</div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setHistoryOpen(false)}
                     className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-950 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100"
-                    title="Collapse history"
+                    title={t.collapseHistory}
                   >
                     <PanelLeftClose size={18} />
                   </button>
@@ -496,7 +497,7 @@ export default function WorkspacePage() {
                 <input
                   value={filter}
                   onChange={(event) => setFilter(event.target.value)}
-                  placeholder="Filter by glyph or class"
+                  placeholder={t.filterPlaceholder}
                   className="w-full rounded-xl border border-stone-700 bg-stone-950 px-10 py-2.5 text-sm text-stone-100 outline-none transition-colors focus:border-amber-400"
                 />
               </div>
@@ -504,11 +505,11 @@ export default function WorkspacePage() {
               <div className="space-y-3 overflow-y-auto pr-1 xl:max-h-[calc(100vh-14rem)]">
                 {records.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-stone-700 bg-stone-950/70 px-4 py-8 text-center text-sm text-stone-500">
-                    No analyses yet.
+                    {t.noAnalyses}
                   </div>
                 ) : filteredRecords.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-stone-700 bg-stone-950/70 px-4 py-8 text-center text-sm text-stone-500">
-                    Nothing matches this filter.
+                    {t.noFilterMatch}
                   </div>
                 ) : (
               filteredRecords.map((record) => {
@@ -541,7 +542,7 @@ export default function WorkspacePage() {
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <p className="truncate text-sm font-medium text-stone-100">{record.imageName}</p>
-                            <p className="mt-1 text-xs text-stone-500">{new Date(record.timestamp).toLocaleDateString()} · {record.result.num_elements} elements</p>
+                            <p className="mt-1 text-xs text-stone-500">{new Date(record.timestamp).toLocaleDateString()} · {record.result.num_elements} {t.elementsSuffix}</p>
                           </div>
                           <button
                             type="button"
@@ -550,7 +551,7 @@ export default function WorkspacePage() {
                               removeRecord(record.id);
                             }}
                             className="rounded-lg p-1.5 text-stone-500 transition-colors hover:bg-stone-800 hover:text-red-300"
-                            aria-label={`Delete ${record.imageName}`}
+                            aria-label={`${t.deleteLabel} ${record.imageName}`}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -563,7 +564,7 @@ export default function WorkspacePage() {
                           ))}
                           {record.result.elements.some((element) => element.rejected) && (
                             <span className="rounded-md bg-red-400/10 px-2 py-1 text-[11px] text-red-300">
-                              {record.result.elements.filter((element) => element.rejected).length} rejected
+                              {record.result.elements.filter((element) => element.rejected).length} {t.rejectedSuffix}
                             </span>
                           )}
                         </div>
@@ -590,7 +591,7 @@ export default function WorkspacePage() {
                       </h2>
                       {focusedIdx !== null && (
                         <span className="rounded-md bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-500 border border-amber-500/20">
-                          Focus: {focusedIdx}
+                          {t.focusLabel}: {focusedIdx}
                         </span>
                       )}
                     </div>
@@ -604,7 +605,7 @@ export default function WorkspacePage() {
                             onClick={() => setOverlayMode(mode)}
                             className={`rounded-md px-3 py-1.5 text-sm font-medium capitalize transition-colors ${isActive ? 'bg-amber-500 text-stone-950' : 'text-stone-400 hover:text-stone-100'}`}
                           >
-                            {mode}
+                            {mode === 'all' ? t.overlayAll : mode === 'focused' ? t.overlayFocused : t.overlayHidden}
                           </button>
                         );
                       })}
@@ -619,56 +620,206 @@ export default function WorkspacePage() {
                       setZoom(z => Math.max(0.25, Math.min(4, z + zoomChange)));
                     }}
                   >
-                    <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: 'transform 0.1s ease' }} className="relative inline-block">
+                    <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: 'transform 0.1s ease', willChange: 'transform' }} className="relative inline-block">
                       <img
                         ref={imageRef}
                         src={currentRecord.imageDataUrl}
                         alt={currentRecord.imageName}
                         className="block max-h-[72vh] max-w-full rounded-lg object-contain"
                       />
-                      <canvas
-                        ref={canvasRef}
-                        className="absolute left-0 top-0 cursor-pointer"
-                        onClick={(event) => {
-                          if (!currentRecord) {
-                            return;
-                          }
-
-                          const matchedIdx = getElementIndexFromCanvasPoint(event.nativeEvent.offsetX, event.nativeEvent.offsetY);
-                          if (matchedIdx === null) {
-                            return;
-                          }
-
-                          setFocusedIdx(matchedIdx);
-                          toggleExpand(matchedIdx);
-                        }}
-                        onMouseMove={(event) => {
-                          const matchedIdx = getElementIndexFromCanvasPoint(event.nativeEvent.offsetX, event.nativeEvent.offsetY);
-                          setHoveredIdx(matchedIdx);
-                        }}
-                        onMouseLeave={() => setHoveredIdx(null)}
-                      />
+                      {currentRecord && overlayMode !== 'hidden' && (
+                        <svg
+                          className="absolute left-0 top-0 w-full h-full pointer-events-none"
+                          viewBox={`0 0 ${currentRecord.result.image_size[0]} ${currentRecord.result.image_size[1]}`}
+                          style={{ width: '100%', height: '100%' }}
+                        >
+                          {currentRecord.result.elements.map((el, idx) => {
+                            if (overlayMode === 'focused' && focusedIdx !== null && focusedIdx !== idx) return null;
+                            const [x, y, w, h] = el.bbox;
+                            const isFocused = idx === focusedIdx;
+                            const isHovered = idx === hoveredIdx;
+                            const strokeColor = el.rejected ? '#ef4444' : isFocused ? '#ffffff' : isHovered ? '#fbbf24' : '#f59e0b';
+                            const badgeColor = strokeColor;
+                            return (
+                              <g key={idx} className="pointer-events-auto" style={{ cursor: 'pointer' }}
+                                 onClick={(e) => { e.stopPropagation(); setFocusedIdx(idx); }}
+                                 onMouseEnter={() => setHoveredIdx(idx)}
+                                 onMouseLeave={() => setHoveredIdx(null)}>
+                                <rect x={x} y={y} width={w} height={h} fill="none" stroke={strokeColor} strokeWidth={isFocused ? 3 : 2} />
+                                <rect x={x} y={Math.max(0, y - 12)} width={14} height={12} fill={badgeColor} />
+                                <text x={x + 7} y={Math.max(0, y - 12) + 6} fill="#0c0a09" fontSize={7} fontWeight="bold" textAnchor="middle" dominantBaseline="central">{idx}</text>
+                              </g>
+                            );
+                          })}
+                        </svg>
+                      )}
                     </div>
                     
                     <div className="absolute bottom-4 right-4 flex items-center gap-1 rounded-xl border border-stone-700 bg-stone-900/90 p-1 backdrop-blur-sm">
-                      <button type="button" onClick={() => setZoom(z => Math.min(4, z + 0.25))} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title="Zoom in">
+                      <button type="button" onClick={() => setZoom(z => Math.min(4, z + 0.25))} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title={t.zoomIn}>
                         <ZoomIn size={16} />
                       </button>
-                      <button type="button" onClick={() => { setZoom(1); setPanOffset({x:0, y:0}); }} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title="Fit to view">
+                      <button type="button" onClick={() => { setZoom(1); setPanOffset({x:0, y:0}); }} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title={t.fitToView}>
                         <Maximize2 size={16} />
                       </button>
-                      <button type="button" onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title="Zoom out">
+                      <button type="button" onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title={t.zoomOut}>
                         <ZoomOut size={16} />
                       </button>
                     </div>
                   </div>
                 </section>
 
-                <section className="flex h-[72vh] min-h-[520px] flex-col overflow-hidden rounded-[28px] border border-stone-800 bg-stone-900/80 p-5 lg:p-6">
+                <section className="flex h-[72vh] min-h-[520px] flex-col overflow-hidden rounded-[28px] border border-stone-800 bg-stone-900/80 sidebar-shell">
+                  {focusedIdx !== null ? (
+                    <div className="flex h-full flex-col">
+                      <div className="flex items-center justify-between sidebar-header px-5 py-4 border-b border-stone-800">
+                        <button 
+                          onClick={() => setFocusedIdx(null)}
+                          className="flex items-center gap-2 text-stone-400 hover:text-stone-100 transition-colors"
+                        >
+                          <ChevronLeft size={16} />
+                        <span className="text-sm font-medium">{t.backToRegions}</span>
+                        </button>
+                        <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">{t.region} {focusedIdx}</span>
+                      </div>
+                      
+                      <div className="flex-1 overflow-y-auto sidebar-body p-5 space-y-6">
+                          {(() => {
+                          const element = currentRecord.result.elements[focusedIdx];
+                          const trust = trustData?.trust;
+                          const summaryClass = trust?.top1_class ?? element.class_name;
+                          const topPrediction = trust?.top1_similarity ?? element.confidence;
+                          const runnerUp = trust?.top_k?.[1]?.confidence ?? element.top_k[1]?.confidence ?? 0;
+                          const margin = trust?.margin_to_second ?? (topPrediction - runnerUp);
+                          const isRejected = trust ? !trust.above_rejection_threshold : element.rejected;
+                          const isAmbiguous = trust?.ambiguous ?? (margin < 0.05);
+                          const detailPreviewSize = getCropPreviewSize(element.bbox, 180);
+                          const initialPredictionDiffers = Boolean(trust && trust.top1_class !== element.class_name);
+                          
+                          return (
+                            <>
+                              <div className="flex flex-col gap-3 rounded-2xl border border-stone-800 bg-stone-900/50 p-4">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-sm font-medium text-stone-400">{t.segmentPreview}</h4>
+                                  <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">{t.region} {focusedIdx}</span>
+                                </div>
+                                <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-stone-800 bg-stone-950/70 p-3">
+                                  <canvas
+                                    ref={detailCanvasRef}
+                                    width={detailPreviewSize.width}
+                                    height={detailPreviewSize.height}
+                                    className="max-h-[180px] max-w-full rounded-lg bg-stone-800"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col gap-3 rounded-2xl border border-stone-800 bg-stone-900/50 p-4">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-sm font-medium text-stone-400">{t.trustSummary}</h4>
+                                  {contextLoading && <Loader2 size={14} className="animate-spin text-stone-500" />}
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xl font-bold text-stone-100 truncate">{summaryClass}</span>
+                                  <span className={`shrink-0 px-2.5 py-1 rounded-md text-sm font-bold ${
+                                    isRejected
+                                      ? 'bg-red-500/10 text-red-400 border border-red-500/20' 
+                                      : 'bg-green-500/10 text-green-400 border border-green-500/20'
+                                  }`}>
+                                    {(topPrediction * 100).toFixed(1)}%
+                                  </span>
+                                </div>
+                                {initialPredictionDiffers && trust && (
+                                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-xs text-amber-300">
+                                    <div className="font-semibold">{t.recalculatedPrediction}</div>
+                                    <div className="mt-1 text-amber-200/80">
+                                      {t.initialProposal}: <span className="font-medium text-amber-200">{element.class_name}</span>
+                                      {' '}#{trust.predicted_class_rank} · {(trust.predicted_class_similarity * 100).toFixed(1)}%
+                                    </div>
+                                  </div>
+                                )}
+                                {isAmbiguous && !isRejected && (
+                                  <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-amber-400">
+                                    <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                                    <div className="text-sm">
+                                      <strong>{t.ambiguousPrediction}</strong>
+                                      <p className="mt-1 text-xs opacity-80">{t.ambiguousDetails} {(margin * 100).toFixed(1)}%. {t.alternativesExist}</p>
+                                    </div>
+                                  </div>
+                                )}
+                                {isRejected && (
+                                  <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-red-400">
+                                    <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                                    <div className="text-sm">
+                                      <strong>{t.lowConfidenceFlag}</strong>
+                                      <p className="mt-1 text-xs opacity-80">{t.thresholdDetails}</p>
+                                    </div>
+                                  </div>
+                                )}
+                                {trust && (
+                                  <div className="flex gap-2 text-xs">
+                                    <div className="flex-1 rounded-lg bg-stone-950/50 p-2">
+                                      <span className="text-stone-500 block">{t.rank}</span>
+                                      <span className="text-stone-200 font-semibold">#1</span>
+                                    </div>
+                                    <div className="flex-1 rounded-lg bg-stone-950/50 p-2">
+                                      <span className="text-stone-500 block">{t.entropy}</span>
+                                      <span className="text-stone-200 font-semibold">{trust.entropy.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex-1 rounded-lg bg-stone-950/50 p-2">
+                                      <span className="text-stone-500 block">{t.margin}</span>
+                                      <span className={`font-semibold ${isAmbiguous ? 'text-amber-400' : 'text-stone-200'}`}>{(margin * 100).toFixed(1)}%</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex flex-col gap-3 rounded-2xl border border-stone-800 bg-stone-900/50 p-4">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-sm font-medium text-stone-400">{t.topPredictions}</h4>
+                                  <span className="text-[10px] text-stone-500">{t.entropy}: {trust ? trust.entropy.toFixed(2) : '—'}</span>
+                                </div>
+                                <div className="space-y-2">
+                                  {(trust?.top_k ?? element.top_k).map((item, i) => (
+                                    <div key={i} className="flex items-center gap-2">
+                                      <span className="w-4 text-[10px] text-stone-500 text-right">{i + 1}</span>
+                                      <div className="flex-1">
+                                        <div className="flex justify-between text-xs mb-0.5">
+                                          <span className={i === 0 ? "text-stone-200 font-medium" : "text-stone-400"}>{item.class_name}</span>
+                                          <span className={i === 0 ? "text-stone-300 font-medium" : "text-stone-500"}>{(item.confidence * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div className="h-1 w-full overflow-hidden rounded-full bg-stone-800">
+                                          <div 
+                                            className={`h-full rounded-full ${i === 0 ? (isRejected ? 'bg-amber-500' : 'bg-green-500') : 'bg-stone-600'}`}
+                                            style={{ width: `${item.confidence * 100}%` }}
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                      
+                      <div className="p-5 border-t border-stone-800 sidebar-header">
+                         <button
+                           type="button"
+                           onClick={handleEditorHandoff}
+                           className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-stone-950 transition-all hover:bg-amber-400 active:scale-[0.98]"
+                         >
+                           <Edit3 size={16} />
+                            {currentRecord.result.elements[focusedIdx].rejected ? t.correctElement : t.annotateRegion}
+                         </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col h-full p-5 lg:p-6">
                   <div className="mb-4 flex items-start justify-between gap-4 border-b border-stone-800 pb-4">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.24em] text-stone-500">Proposal panel</p>
-                      <h2 className="mt-1 text-lg font-semibold text-stone-100">Detected elements</h2>
+                      <p className="text-xs uppercase tracking-[0.24em] text-stone-500">{t.proposalPanel}</p>
+                      <h2 className="mt-1 text-lg font-semibold text-stone-100">{t.detectedElements}</h2>
                     </div>
                     <div className="text-right">
                       <button
@@ -676,7 +827,7 @@ export default function WorkspacePage() {
                         onClick={handleEditorHandoff}
                         className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-stone-950 transition-colors hover:bg-amber-400"
                       >
-                        <Edit3 size={16} /> Annotate current record
+                        <Edit3 size={16} /> {t.annotateRecord}
                       </button>
                     </div>
                   </div>
@@ -685,9 +836,9 @@ export default function WorkspacePage() {
                     <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3">
                       <Info className="mt-0.5 shrink-0 text-amber-500" size={18} />
                       <div>
-                        <p className="text-sm text-stone-200">All proposals were rejected — consider annotating to improve results.</p>
+                        <p className="text-sm text-stone-200">{t.allRejected}</p>
                         <button type="button" onClick={handleEditorHandoff} className="mt-1 text-xs font-medium text-amber-400 hover:text-amber-300">
-                          Go to annotation →
+                          {t.goToAnnotation}
                         </button>
                       </div>
                     </div>
@@ -708,7 +859,7 @@ export default function WorkspacePage() {
                         setFocusedIdx((prev) => (prev === null ? total - 1 : (prev - 1 + total) % total));
                       } else if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        if (focusedIdx !== null) toggleExpand(focusedIdx);
+                        if (focusedIdx !== null) setFocusedIdx(focusedIdx);
                       } else if (e.key === 'Escape') {
                         setFocusedIdx(null);
                       }
@@ -717,14 +868,12 @@ export default function WorkspacePage() {
                     {currentRecord.result.elements.length === 0 ? (
                       <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-stone-800 bg-stone-950/50 p-6 text-center">
                         <Info className="mb-3 text-stone-600" size={32} />
-                        <p className="text-stone-400">No elements detected — try a different image or check segmentation settings.</p>
+                        <p className="text-stone-400">{t.noElements}</p>
                       </div>
                     ) : (
                       currentRecord.result.elements.map((element, idx) => {
                         const hasAnnotation = (currentRecord.annotations ?? {})[idx] !== undefined;
                         const displayClass = hasAnnotation ? (currentRecord.annotations ?? {})[idx] : element.class_name;
-                        const isExpanded = expandedItems[idx];
-                        const isFocused = focusedIdx === idx;
                         const isHovered = hoveredIdx === idx;
                         const badgeClasses = element.rejected
                           ? 'bg-red-400/10 text-red-400 border border-red-400/20'
@@ -742,86 +891,54 @@ export default function WorkspacePage() {
 
                         return (
                           <div key={idx} className="flex flex-col">
-                            <div
-                              className={`flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer transition-colors ${
-                                isFocused ? 'border-amber-500/60 bg-amber-500/5' : isHovered ? 'border-stone-700 bg-stone-900' : 'border-stone-800 bg-stone-950'
+                             <div
+                              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl border transition-colors ${
+                                focusedIdx === idx ? 'border-amber-500/60 bg-amber-500/5' : isHovered ? 'border-stone-700 bg-stone-900' : 'border-stone-800 bg-stone-950'
                               }`}
-                              onClick={() => {
-                                setFocusedIdx(idx);
-                                toggleExpand(idx);
-                              }}
                               onMouseEnter={() => setHoveredIdx(idx)}
                               onMouseLeave={() => setHoveredIdx((current) => (current === idx ? null : current))}
                               tabIndex={0}
                             >
-                              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded text-xs font-bold ${indexBadgeClasses}`}>
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-stone-800/50 bg-stone-900">
+                                <canvas
+                                  ref={(canvas) => {
+                                    cropCanvasRefs.current[idx] = canvas;
+                                  }}
+                                  width={destinationWidth}
+                                  height={destinationHeight}
+                                  className="block rounded bg-stone-800"
+                                />
+                              </div>
+                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold ${indexBadgeClasses}`}>
                                 {idx}
                               </span>
                               <span className="flex-1 truncate text-sm text-stone-100">{displayClass}</span>
                               {hasAnnotation && <CheckCircle2 size={12} className="text-green-400 shrink-0" />}
-                              <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${badgeClasses}`}>
-                                {(element.confidence * 100).toFixed(1)}%
-                              </span>
-                              {isExpanded ? (
-                                <ChevronUp size={14} className="shrink-0 text-stone-500" />
-                              ) : (
-                                <ChevronDown size={14} className="shrink-0 text-stone-500" />
-                              )}
-                            </div>
-
-                            <div className={isExpanded ? "mt-1 rounded-xl border border-amber-500/30 bg-stone-950/80 p-3" : "hidden"}>
-                              <div className="flex gap-4">
-                                <div className="flex h-[48px] w-[48px] shrink-0 items-center justify-center overflow-hidden rounded border border-stone-800/50 bg-stone-900">
-                                  <canvas
-                                    ref={(canvas) => {
-                                      cropCanvasRefs.current[idx] = canvas;
-                                    }}
-                                    width={destinationWidth}
-                                    height={destinationHeight}
-                                    className="block rounded bg-stone-800"
-                                  />
-                                </div>
-
-                                <div className="flex-1">
-                                  <div className="mb-1 text-xs font-medium text-stone-400">Alternative predictions:</div>
-                                  <div className="space-y-1">
-                                    {element.top_k.map((topItem, topItemIndex) => (
-                                      <div key={topItemIndex} className="flex items-center justify-between text-xs">
-                                        <span className="text-stone-300">{topItem.class_name}</span>
-                                        <span className="text-stone-500">{(topItem.confidence * 100).toFixed(1)}%</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
+                              <div className="flex shrink-0 flex-col items-end gap-0.5">
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold leading-none ${badgeClasses}`}>
+                                  {(element.confidence * 100).toFixed(1)}%
+                                </span>
+                                {focusedIdx === idx && trustData && (
+                                  <span className="text-[9px] text-stone-500 leading-none">
+                                    H={trustData.trust.entropy.toFixed(2)}
+                                  </span>
+                                )}
                               </div>
-
-                              {element.rejected && (
-                                <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-400/10 p-2 text-red-400">
-                                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                                  <span className="text-xs">Low confidence prediction. Review recommended.</span>
-                                </div>
-                              )}
-
-                              {(isFocused || element.rejected) && (
-                                <div className="mt-3 flex justify-end">
-                                  <button
-                                    type="button"
-                                    onClick={handleEditorHandoff}
-                                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                      element.rejected ? 'bg-red-500 text-stone-950 hover:bg-red-400' : 'bg-amber-500 text-stone-950 hover:bg-amber-400'
-                                    }`}
-                                  >
-                                    <Edit3 size={14} />
-                                    {element.rejected ? 'Correct this element' : 'Annotate'}
-                                  </button>
-                                </div>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => setFocusedIdx(idx)}
+                                className="shrink-0 rounded-lg border border-stone-700 px-2.5 py-1 text-[11px] font-semibold text-stone-300 transition-colors hover:border-amber-500/60 hover:text-amber-300"
+                              >
+                                {t.detailsButton}
+                              </button>
                             </div>
                           </div>
                         );
                       })
                     )}
                   </div>
+                </div>
+                  )}
                 </section>
               </div>
             </>
@@ -830,9 +947,9 @@ export default function WorkspacePage() {
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/20 bg-amber-400/10 text-amber-300">
                 <Info size={28} />
               </div>
-              <h2 className="mt-5 text-xl font-semibold text-stone-100">No analysis selected</h2>
+              <h2 className="mt-5 text-xl font-semibold text-stone-100">{t.noAnalysisSelected}</h2>
               <p className="mt-2 text-sm text-stone-400">
-                Upload a new glyph or select a saved run from history.
+                {t.noAnalysisDetails}
               </p>
             </div>
           )}

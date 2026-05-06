@@ -1,0 +1,1 @@
+- T7: Added inline annotation panel on the workspace page, allowing quick relabeling directly within the workspace with a zoomed crop, dropdown, and suggestions without navigating away. A custom CSS animation handles the slide-in.

@@ -80,3 +80,35 @@
 - Leveraged CSS `hidden` utility on the expanded container to ensure `cropCanvasRefs` remain in the DOM for the `drawAllCanvases` logic to work, without visible impact on the unexpanded state.
 - Resized the crop destination size down to 48px for the expanded view thumbnail.
 - Maintained crucial design system classes (`border-amber-500/60 bg-amber-500/5` for active states, `rounded-xl` for inner containers) ensuring layout consistency with existing UI.
+
+## [2026-05-05] T9 — inline relabel persistence
+
+- `WorkspacePage` can load class options eagerly with a one-time `getClasses()` effect; failures should be ignored so the region panel still renders and falls back to the current label.
+- Inline relabeling works best in the focused + expanded detail area by deriving the selected value from `annotations[idx] ?? element.class_name`, then building a full annotations object before calling `updateAnnotations(record.id, annotations)`.
+- To avoid collapsing focus/expansion after a successful inline save, `syncRecords` needs a preserve-inspection path that refreshes `records/currentRecord` from storage without running the full inspection reset.
+- Per-region transient save feedback can be modeled as `Record<number, 'saved' | 'error' | null>` plus timeout refs so success/error badges auto-clear without introducing unsaved draft state.
+
+## [2026-05-05] Task: keyboard navigation for region list
+
+- Implemented keyboard navigation on the region list container (.flex-1.space-y-1.overflow-y-auto.pr-2):
+  - tabIndex=0 added to make container focusable
+  - onKeyDown handles ArrowDown/ArrowRight, ArrowUp/ArrowLeft, Enter/Space, and Escape
+  - Navigation wraps around (modular arithmetic over total elements)
+  - Enter/Space toggles expansion for the focused index via existing toggleExpand()
+  - Escape clears focusedIdx (sets to null)
+  - Events are scoped to the container (no global/window listeners)
+
+- Verification steps completed:
+  - lsp diagnostics run for WorkspacePage.tsx — no diagnostics
+  - npm run build in codex-frontend — build succeeded
+
+- Accessibility notes / follow-ups:
+  - Consider adding visible focus ring styles for the container when focused (a11y affordance)
+  - Consider ARIA roles (list/listitem) and announcing focused item to screen readers
+  - Ensure keyboard focus order includes the region list in typical tab flow; may require adjusting surrounding tabbable elements
+
+## [2026-05-05] Task 15 — dense/tiny/overlapping region selection
+
+- Shared zoom clamping is now centralized in `clampZoom()` with `MIN_ZOOM=0.25` and `MAX_ZOOM=4`, so wheel, button, and reset interactions cannot drift apart.
+- Canvas hit testing is more reliable when done in rendered canvas space first: compare pointer coordinates against scaled bbox bounds, then treat sub-12px regions as selectable within an 8px radius around the bbox center.
+- Overlapping matches should be disambiguated by sorting matched regions by original bbox area ascending so the most specific/smallest region wins; the existing proposal panel row `onClick` remains the fallback path for selecting any region directly.
