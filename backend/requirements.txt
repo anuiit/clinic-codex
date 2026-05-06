@@ -16,7 +16,7 @@ flask-cors>=4.0
 torch>=2.1,<2.6
 torchvision>=0.16,<0.21
 
-# SAM family — PyPI only, NO git+https (causes pip resolver to clone+build → memory spike)
+# SAM family — PyPI only, NO git URLs (causes pip resolver to clone+build → memory spike)
 segment-anything==1.0
 mobile-sam==1.0
 
