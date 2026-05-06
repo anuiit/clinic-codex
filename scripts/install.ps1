@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Clinic Codex Windows installer — staged, CPU-only, WSL-safe equivalent.
+Clinic Codex Windows installer - staged, CPU-only, WSL-safe equivalent.
 Each stage is checkpointed. If interrupted, re-run is safe (idempotent).
 #>
 param()
@@ -33,7 +33,7 @@ if (-not $Python) { Fail "Need Python 3.10 or 3.11. Install from python.org and 
 
 # Verify version is not 3.12+
 $verCheck = & $Python.cmd @($Python.args) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>&1
-if ($verCheck -notmatch '^3\.(10|11)$') { Fail "Python reports version $verCheck — need 3.10 or 3.11." }
+if ($verCheck -notmatch '^3\.(10|11)$') { Fail "Python reports version $verCheck - need 3.10 or 3.11." }
 
 # Disk space check (~2GB needed)
 $drive = (Get-Item .).PSDrive.Name
@@ -58,31 +58,31 @@ try { & $VenvPip install --quiet --upgrade pip 2>$null } catch { Log "  pip upgr
 Log "Stage 2/5: core utils (numpy, pillow, scipy, pyyaml, tqdm)"
 & $VenvPip install --no-cache-dir --prefer-binary `
     "numpy>=1.24,<2.5" "pillow>=10.0" "pyyaml>=6.0" "scipy>=1.11" "tqdm>=4.66"
-if ($LASTEXITCODE -ne 0) { Fail "Stage 2 failed — core utils" }
+if ($LASTEXITCODE -ne 0) { Fail "Stage 2 failed - core utils" }
 
 # --- Stage 3: web (flask) ---
 Log "Stage 3/5: flask + flask-cors"
 & $VenvPip install --no-cache-dir --prefer-binary `
     "flask>=3.0,<4.0" "flask-cors>=4.0"
-if ($LASTEXITCODE -ne 0) { Fail "Stage 3 failed — flask" }
+if ($LASTEXITCODE -ne 0) { Fail "Stage 3 failed - flask" }
 
-# --- Stage 4: torch CPU (~200MB — be patient) ---
-Log "Stage 4/5: torch CPU wheels (~200MB download — be patient)"
+# --- Stage 4: torch CPU (~200MB - be patient) ---
+Log "Stage 4/5: torch CPU wheels (~200MB download - be patient)"
 & $VenvPip install --no-cache-dir --prefer-binary `
     --extra-index-url https://download.pytorch.org/whl/cpu `
     "torch>=2.1,<2.6" "torchvision>=0.16,<0.21"
-if ($LASTEXITCODE -ne 0) { Fail "Stage 4 failed — torch. Re-run script to resume." }
+if ($LASTEXITCODE -ne 0) { Fail "Stage 4 failed - torch. Re-run script to resume." }
 
 # Sanity: confirm CPU not CUDA
 $cudaVer = & $VenvPy -c "import torch; print(torch.version.cuda)" 2>&1
-if ($cudaVer -ne 'None') { Fail "torch installed with CUDA ($cudaVer) — should be CPU. Delete backend\.venv and retry." }
+if ($cudaVer -ne 'None') { Fail "torch installed with CUDA ($cudaVer) - should be CPU. Delete backend\.venv and retry." }
 
 # --- Stage 5: SAM family + augmentation + timm ---
 Log "Stage 5/5: segment-anything, mobile-sam, albumentations, timm"
 & $VenvPip install --no-cache-dir --prefer-binary `
     "segment-anything==1.0" "mobile-sam==1.0" `
     "albumentations>=1.4,<2.0" "timm>=0.9"
-if ($LASTEXITCODE -ne 0) { Fail "Stage 5 failed — SAM/augmentation" }
+if ($LASTEXITCODE -ne 0) { Fail "Stage 5 failed - SAM/augmentation" }
 
 # --- Frontend (idempotent npm) ---
 Log "Frontend: npm install (idempotent)"
@@ -93,12 +93,12 @@ if (-not (Test-Path $nodeModules) -or (Get-ChildItem $nodeModules -ErrorAction S
     if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "npm install failed" }
     Pop-Location
 } else {
-    Log "  frontend\node_modules present — skipping (delete it to force reinstall)"
+    Log "  frontend\node_modules present - skipping (delete it to force reinstall)"
 }
 
 # --- Final import sanity ---
 Log "Sanity: importing all critical modules"
 & $VenvPy -c "import flask, torch, torchvision, mobile_sam, segment_anything, albumentations, timm; print('all imports OK')"
-if ($LASTEXITCODE -ne 0) { Fail "Sanity import failed — see error above" }
+if ($LASTEXITCODE -ne 0) { Fail "Sanity import failed - see error above" }
 
 Log "DONE. Launch with: bash scripts/run-dev.sh (or run backend and frontend manually)"
