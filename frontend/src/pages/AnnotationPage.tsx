@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Loader2, ZoomIn, ZoomOut, Maximize2, PenTool, MousePointer2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, ZoomIn, ZoomOut, Maximize2, PenTool, MousePointer2, Trash2, Upload } from 'lucide-react';
 import { getAnalysisById, updateElements } from '../services/storage';
-import { getClasses } from '../services/api';
+import { getClasses, saveAnnotation } from '../services/api';
 import { appText } from '../i18n/text';
 import type { AnalysisRecord, DetectedElement } from '../types';
 
@@ -31,6 +31,8 @@ export default function AnnotationPage() {
   const [classes, setClasses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
   const [focusedIdx, setFocusedIdx] = useState<number | null>(initialFocusedIdx);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
@@ -356,6 +358,36 @@ export default function AnnotationPage() {
     }, 300);
   };
 
+  const handleSendForTraining = async () => {
+    if (!record || !id) return;
+    setSending(true);
+    try {
+      // Build annotations map: index → class_name (only elements with explicit annotation)
+      const annotations: Record<number, string> = {};
+      elements.forEach((el, idx) => {
+        if (el.class_name) annotations[idx] = el.class_name;
+      });
+      const payload = {
+        analysis_id: id,
+        image_name: record.imageName,
+        image_data_url: record.imageDataUrl,
+        timestamp: record.timestamp,
+        annotations: elements.map((el, idx) => ({
+          index: idx,
+          bbox: el.bbox,
+          class_name: el.class_name,
+        })),
+      };
+      const response = await saveAnnotation(payload);
+      setToast({ msg: `Envoyé : ${response.saved_count} éléments dans ${response.classes.length} classes`, ok: true });
+    } catch (err) {
+      setToast({ msg: err instanceof Error ? err.message : 'Erreur inconnue', ok: false });
+    } finally {
+      setSending(false);
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
   if (!record && !loading) {
     return (
       <div className="max-w-2xl mx-auto text-center py-12">
@@ -407,14 +439,24 @@ export default function AnnotationPage() {
           </div>
         </div>
         
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-1.5 text-sm font-semibold text-stone-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
-        >
-          {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-          {t.saveChanges}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-1.5 text-sm font-semibold text-stone-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+            {t.saveChanges}
+          </button>
+          <button
+            onClick={handleSendForTraining}
+            disabled={sending}
+            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+          >
+            {sending ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+            Envoyer pour entraînement
+          </button>
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 gap-2">
@@ -544,6 +586,11 @@ export default function AnnotationPage() {
           </div>
         </div>
       </div>
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-medium shadow-lg transition-all ${toast.ok ? 'bg-emerald-700 text-white' : 'bg-red-700 text-white'}`}>
+          {toast.msg}
+        </div>
+      )}
     </div>
   );
 }
