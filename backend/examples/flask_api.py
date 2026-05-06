@@ -20,13 +20,17 @@ import json
 import math
 import os
 import sys
+import traceback
 from pathlib import Path
 
 import numpy as np
 from flask import Flask, jsonify, request, send_file
 from PIL import Image
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BACKEND_ROOT))
+
+from services.annotation_storage import save_annotation, decode_image_data_url
 
 from codex_model import CodexClassifier
 from codex_pipeline.segmentation import MobileSAMSegmenter
@@ -351,6 +355,43 @@ def get_classes():
     with open(config_path) as f:
         config = json.load(f)
     return jsonify({"num_classes": config["num_classes"], "class_names": config["class_names"]})
+
+
+@app.route("/save-annotation", methods=["POST"])
+def save_annotation_route():
+    data = request.get_json(force=True, silent=True)
+    if data is None:
+        return jsonify({"status": "error", "error": "invalid JSON"}), 400
+
+    for field in ("analysis_id", "image_data_url", "annotations"):
+        if field not in data:
+            return jsonify({"status": "error", "error": f"missing field: {field}"}), 400
+
+    if not isinstance(data["annotations"], list) or len(data["annotations"]) == 0:
+        return jsonify({"status": "error", "error": "annotations must be a non-empty list"}), 400
+
+    if not isinstance(data["analysis_id"], str) or not data["analysis_id"].strip():
+        return jsonify({"status": "error", "error": "missing field: analysis_id"}), 400
+
+    try:
+        image = decode_image_data_url(data["image_data_url"])
+    except ValueError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+
+    try:
+        result = save_annotation(
+            data["analysis_id"],
+            image,
+            data["annotations"],
+            base_dir=BACKEND_ROOT / "annotations",
+            elements_dir=BACKEND_ROOT / "training_data" / "Elements",
+        )
+        return jsonify(result), 200
+    except ValueError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"status": "error", "error": "internal error"}), 500
 
 
 if __name__ == "__main__":
