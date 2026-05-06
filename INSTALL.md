@@ -38,6 +38,66 @@ Before we start, you'll need three tools installed on your computer. They are st
    bash scripts/download-weights.sh
    ```
 
+## Manual Launch (Primary Path — WSL2 / Linux)
+
+This section is for researchers who want to understand the installation step-by-step or need to debug their environment. These commands perform the same actions as the automated scripts but give you more control.
+
+### 1. Set Up the Python Environment
+We use a virtual environment to keep the project's tools separate from your system.
+```bash
+python3.11 -m venv backend/.venv
+```
+
+### 2. Install Core Utilities
+These are the basic tools needed for data processing and progress tracking.
+```bash
+backend/.venv/bin/pip install --no-cache-dir --prefer-binary numpy pillow pyyaml scipy tqdm
+```
+
+### 3. Install Web Framework
+This installs the software that lets the backend talk to your web browser.
+```bash
+backend/.venv/bin/pip install --no-cache-dir --prefer-binary flask flask-cors
+```
+
+### 4. Install AI Engine (CPU Version)
+This installs the machine learning engine. We use the CPU-only version to keep the download small and avoid issues with specialized graphics hardware.
+```bash
+backend/.venv/bin/pip install --no-cache-dir --prefer-binary --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.1,<2.6" "torchvision>=0.16,<0.21"
+```
+
+### 5. Install Image Analysis Tools
+These are the specific AI models used for identifying glyphs in historical documents.
+```bash
+backend/.venv/bin/pip install --no-cache-dir --prefer-binary "segment-anything==1.0" "mobile-sam==1.0" "albumentations>=1.4,<2.0" "timm>=0.9"
+```
+
+### 6. Set Up the Web Interface
+This installs the files needed for the visual part of the tool.
+```bash
+cd frontend && npm install && cd ..
+```
+
+### 7. Start the Backend Server
+This starts the AI engine on port 7117. The `&` at the end lets it run while you type the next command.
+```bash
+PORT=7117 backend/.venv/bin/python backend/examples/flask_api.py &
+```
+
+### 8. Start the Web Interface
+This starts the visual interface on port 7118.
+```bash
+cd frontend && PORT=7118 npm run dev
+```
+
+### 9. Verify and Open
+To make sure the backend is working, you can check it with this command:
+```bash
+curl http://localhost:7117/classes
+```
+Then, open your web browser and go to:
+`http://localhost:7118`
+
 ## How to Run the Tool
 
 Once installation is finished, you can start the application whenever you want to use it:
