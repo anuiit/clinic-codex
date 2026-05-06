@@ -2,120 +2,143 @@
 
 Welcome! You don't need to be a programmer to set up the Clinic Codex annotation tool. This guide will help you get everything running on your computer.
 
-## Prerequisites
+## Step 0: Get the Project Files
 
-Before we start, you'll need three tools installed on your computer. They are standard pieces of software used by many applications:
+Before installing, you need to have the Clinic Codex files on your computer.
 
-1. **Git**: Used to manage the project files.
-2. **Python (3.10 or newer)**: The engine that runs our AI models.
-3. **Node.js (18 or newer)**: The engine that runs the web interface.
+1. **Download the project**:
+   - If you know how to use **Git**, run: `git clone https://github.com/YOUR_REPO_URL`
+   - Otherwise, go to the project page on GitHub, click the green **"Code"** button, and select **"Download ZIP"**.
+2. **Extract the files**: If you downloaded a ZIP file, right-click it and select "Extract All" to a folder on your computer.
+3. **Open the folder**: Make sure you are inside the main `clinic-codex` folder.
 
-## Step-by-Step Installation
+## Step 1: Install Necessary Software
+
+You'll need three tools installed. They are standard pieces of software used by many applications:
+
+1. **Git**: Used to manage the project files. [Download here](https://git-scm.com/downloads).
+2. **Python (3.10 or 3.11)**: This is the engine that runs our AI. 
+   - **Important**: Please use version **3.10 or 3.11**. Newer versions (like 3.12 or 3.13) are not yet compatible with the AI libraries we use. [Download Python 3.11 here](https://www.python.org/downloads/release/python-3119/).
+3. **Node.js (version 18 or newer)**: This runs the visual part of the tool. [Download here](https://nodejs.org/).
+
+## Step 2: Automated Installation
 
 ### For Mac and Linux Users
 
 1. **Open your Terminal**: You can find this in your Applications folder or by searching for "Terminal".
-2. **Navigate to the project folder**: Use the `cd` command to enter the directory where you downloaded this project.
+2. **Go to the project folder**: Type `cd ` (with a space) and then drag your `clinic-codex` folder into the Terminal window. Press Enter.
 3. **Run the installer**: Type the following and press Enter:
    ```bash
    bash scripts/install.sh
    ```
-4. **Download AI models**: These are large files needed for the tool to work. Run:
-   ```bash
-   bash scripts/download-weights.sh
-   ```
+   *Note: This can take 5–10 minutes to finish. It is setting up all the AI tools for you.*
 
-### For Windows Users (Best-effort)
+### For Windows Users
 
 1. **Open PowerShell**: Search for "PowerShell" in your Start menu.
-2. **Navigate to the project folder**.
-3. **Run the installer**:
+2. **Go to the project folder**: Type `cd ` (with a space) and then drag your `clinic-codex` folder into the PowerShell window. Press Enter.
+3. **Run the installer**: Type the following and press Enter:
    ```powershell
    .\scripts\install.ps1
    ```
-4. **Download AI models**:
-   ```bash
-   bash scripts/download-weights.sh
+
+## Step 3: Final Configuration Check
+
+Before you start the tool, we need to make sure one configuration file is correct.
+
+1. Go into the `frontend` folder inside the project.
+2. Look for a file named `.env`. If it doesn't exist, create a new text file and name it `.env`.
+3. Open this file with a text editor (like Notepad or TextEdit).
+4. Make sure it contains exactly this line:
+   ```text
+   VITE_API_BASE_URL=http://localhost:7117
    ```
+5. Save and close the file.
 
-## Manual Launch (Primary Path — WSL2 / Linux)
+---
 
-This section is for researchers who want to understand the installation step-by-step or need to debug their environment. These commands perform the same actions as the automated scripts but give you more control.
+## How to Run the Tool
+
+Whenever you want to use Clinic Codex, follow these steps:
+
+1. Open your Terminal (Mac/Linux) or PowerShell (Windows).
+2. Navigate to your project folder using the `cd` command.
+3. Start the tool by running:
+   ```bash
+   bash scripts/run-dev.sh
+   ```
+4. Wait for the message saying the servers have started.
+5. Open your web browser (like Chrome or Firefox) and go to:
+   `http://localhost:7118`
+
+### ⚠️ A Note on Speed
+The first time you analyze an image, the tool will automatically download the AI models (about 40MB). This happens only once.
+
+When you click to analyze a glyph, it usually takes **30–60 seconds** to finish. This is normal because the AI is doing complex math on your computer's processor. Please wait for the result to appear.
+
+## How to Stop
+
+To stop the tool, go back to your Terminal or PowerShell window and press **Ctrl + C** on your keyboard. This will safely shut down the application.
+
+---
+
+## Troubleshooting
+
+- **"Python" or "Node" not found**: Ensure you've installed them from their official websites and restarted your Terminal or PowerShell window.
+- **Port already in use**: This usually means the tool is already running in another window. Close that window or stop the process.
+- **Analysis fails or never finishes**: 
+   - Check that your `frontend/.env` file contains the correct line mentioned in Step 3.
+   - Make sure you are using Python 3.10 or 3.11.
+- **Optional - Pre-downloading AI models**: If you have a slow internet connection and want to download the AI models before starting, Mac/Linux users can run:
+  ```bash
+  bash scripts/download-weights.sh
+  ```
+  Otherwise, the tool will handle this automatically the first time you use it.
+
+---
+
+## Advanced: Manual Step-by-Step Installation
+
+This section is for users who want to see exactly what is happening or need to fix specific issues. You don't need to do this if the automated installation worked.
 
 ### 1. Set Up the Python Environment
-We use a virtual environment to keep the project's tools separate from your system.
+We use a "virtual environment" to keep the project's tools separate.
 ```bash
 python3.11 -m venv backend/.venv
 ```
 
-### 2. Install Core Utilities
-These are the basic tools needed for data processing and progress tracking.
+### 2. Install Core Tools
 ```bash
 backend/.venv/bin/pip install --no-cache-dir --prefer-binary numpy pillow pyyaml scipy tqdm
 ```
 
 ### 3. Install Web Framework
-This installs the software that lets the backend talk to your web browser.
 ```bash
 backend/.venv/bin/pip install --no-cache-dir --prefer-binary flask flask-cors
 ```
 
-### 4. Install AI Engine (CPU Version)
-This installs the machine learning engine. We use the CPU-only version to keep the download small and avoid issues with specialized graphics hardware.
+### 4. Install AI Engine
 ```bash
 backend/.venv/bin/pip install --no-cache-dir --prefer-binary --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.1,<2.6" "torchvision>=0.16,<0.21"
 ```
 
 ### 5. Install Image Analysis Tools
-These are the specific AI models used for identifying glyphs in historical documents.
 ```bash
 backend/.venv/bin/pip install --no-cache-dir --prefer-binary "segment-anything==1.0" "mobile-sam==1.0" "albumentations>=1.4,<2.0" "timm>=0.9"
 ```
 
 ### 6. Set Up the Web Interface
-This installs the files needed for the visual part of the tool.
 ```bash
 cd frontend && npm install && cd ..
 ```
 
 ### 7. Start the Backend Server
-This starts the AI engine on port 7117. The `&` at the end lets it run while you type the next command.
 ```bash
-PORT=7117 backend/.venv/bin/python backend/examples/flask_api.py &
+PORT=7117 backend/.venv/bin/python backend/examples/flask_api.py
 ```
 
 ### 8. Start the Web Interface
-This starts the visual interface on port 7118.
+In a new window:
 ```bash
 cd frontend && PORT=7118 npm run dev
 ```
-
-### 9. Verify and Open
-To make sure the backend is working, you can check it with this command:
-```bash
-curl http://localhost:7117/classes
-```
-Then, open your web browser and go to:
-`http://localhost:7118`
-
-## How to Run the Tool
-
-Once installation is finished, you can start the application whenever you want to use it:
-
-1. In your Terminal or PowerShell, run:
-   ```bash
-   bash scripts/run-dev.sh
-   ```
-2. Wait for the message saying the servers have started.
-3. Open your web browser (like Chrome or Firefox) and go to:
-   `http://localhost:7118`
-
-## How to Stop
-
-To stop the tool, go back to your Terminal or PowerShell window and press **Ctrl + C** on your keyboard. This will safely shut down the servers.
-
-## Troubleshooting
-
-- **Python or Node not found**: Ensure you've installed them from their official websites and restarted your Terminal.
-- **Port already in use**: This usually means the tool is already running in another window. Close that window or stop the process.
-- **Weights download fails**: Check your internet connection. These files are several hundred megabytes in size.
