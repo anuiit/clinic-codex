@@ -32,6 +32,8 @@ from codex_model import CodexClassifier
 from codex_pipeline.segmentation import MobileSAMSegmenter
 
 app = Flask(__name__)
+# Limit request payloads to 50MB to avoid large uploads
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 # Environment-driven configuration
 # PORT, HOST, CORS_ORIGINS, MODEL_DIR

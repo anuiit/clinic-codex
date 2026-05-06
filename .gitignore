@@ -6,6 +6,10 @@
 ehthumbs.db
 Thumbs.db
 __MACOSX/
+.sisyphus/
+.omc/
+EMBEDDING-READINESS.md
+
 
 # Python
 __pycache__/
@@ -67,3 +71,10 @@ build/
 !frontend/
 !backend/
 !backend/data/
+
+# Ignore storage and generated backend folders but keep .gitkeep placeholders
+backend/annotations/
+!backend/annotations/.gitkeep
+backend/training_data/
+!backend/training_data/.gitkeep
+backend/precomputed/
