@@ -12,7 +12,7 @@ The Codex Glyph Analyzer is a web interface for uploading glyph images, viewing 
 ## Prerequisites
 
 - **Node.js**: Version 18 or higher is required.
-- **Backend API**: A compatible backend must be running. By default, the app expects the API at `http://localhost:5000`.
+- **Backend API**: A compatible backend must be running. By default, the app expects the API at `http://localhost:7117`.
   - A demo backend is available at `frontend_integration_fix/frontend_integration/examples/flask_api.py`.
 
 ## Installation
