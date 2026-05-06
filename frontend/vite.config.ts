@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
+// Cast config to any to allow Vitest "test" option without typing errors
 export default defineConfig({
   server: { port: 7118, strictPort: false },
   plugins: [react(), tailwindcss()],
@@ -11,4 +12,4 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
   },
-})
+} as any)
