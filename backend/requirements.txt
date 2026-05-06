@@ -1,11 +1,27 @@
-torch>=2.1.0
-torchvision>=0.16.0
-numpy>=1.24.0
-Pillow>=10.0.0
-albumentations>=1.3.1
-flask>=3.0.0
-mobile-sam
-segment-anything
-scipy>=1.11.0
-tqdm>=4.66.0
+# CPU-only torch wheels — DO NOT REMOVE THIS LINE (prevents 3GB CUDA download → WSL OOM)
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Core
+numpy>=1.24,<2.5
+pillow>=10.0
 pyyaml>=6.0
+scipy>=1.11
+tqdm>=4.66
+
+# Web
+flask>=3.0,<4.0
+flask-cors>=4.0
+
+# ML — CPU torch (resolved from extra-index-url above)
+torch>=2.1,<2.6
+torchvision>=0.16,<0.21
+
+# SAM family — PyPI only, NO git+https (causes pip resolver to clone+build → memory spike)
+segment-anything==1.0
+mobile-sam==1.0
+
+# Augmentation — pinned <2.0 (2.x has breaking API changes for our pipeline)
+albumentations>=1.4,<2.0
+
+# Vision backbones (DINOv2 via timm)
+timm>=0.9
