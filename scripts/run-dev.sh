@@ -1,48 +1,66 @@
 #!/usr/bin/env bash
-set -e
+# Clinic Codex dev launcher — backend on :7117, frontend on :7118.
+# Defensive: fails fast with clear errors if env not set up.
 
-# run-dev.sh — start backend and frontend in parallel with clean shutdown
-# Usage: ./scripts/run-dev.sh
+set -u
+set -o pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$SCRIPT_DIR/.."
-cd "$ROOT_DIR"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
 
-backend_pid=""
-frontend_pid=""
+log()  { printf '[run-dev] %s\n' "$*"; }
+fail() { printf '[run-dev] ERROR: %s\n' "$*" >&2; exit 1; }
 
+# --- Pre-flight: venv ---
+PY="backend/.venv/bin/python"
+[ -x "$PY" ] || fail "backend/.venv missing. Run: bash scripts/install.sh"
+"$PY" -c "import flask, torch, mobile_sam" 2>/dev/null \
+  || fail "venv incomplete. Run: bash scripts/install.sh"
+
+# --- Pre-flight: frontend deps ---
+[ -d frontend/node_modules ] || fail "frontend/node_modules missing. Run: bash scripts/install.sh"
+
+# --- Pre-flight: ports ---
+BACKEND_PORT="${BACKEND_PORT:-7117}"
+FRONTEND_PORT="${FRONTEND_PORT:-7118}"
+for port in "$BACKEND_PORT" "$FRONTEND_PORT"; do
+  if (echo > "/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    fail "Port $port already in use. Stop other process or override BACKEND_PORT/FRONTEND_PORT env."
+  fi
+done
+
+# --- Cleanup on exit ---
+PIDS=()
 cleanup() {
-  echo "\nStopping servers..."
-  if [ -n "$backend_pid" ]; then
-    kill "$backend_pid" 2>/dev/null || true
-  fi
-  if [ -n "$frontend_pid" ]; then
-    kill "$frontend_pid" 2>/dev/null || true
-  fi
-  # wait for background jobs to exit (ignore errors)
-  if [ -n "$backend_pid" ]; then
-    wait "$backend_pid" 2>/dev/null || true
-  fi
-  if [ -n "$frontend_pid" ]; then
-    wait "$frontend_pid" 2>/dev/null || true
-  fi
-  echo "Servers stopped."
-  exit 0
+  log "shutting down (pids: ${PIDS[*]:-none})"
+  for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done
+  wait 2>/dev/null || true
 }
+trap cleanup EXIT INT TERM
 
-trap 'cleanup' SIGINT SIGTERM
+# --- Launch backend (call python directly, no source activate) ---
+log "starting backend on :$BACKEND_PORT"
+PORT="$BACKEND_PORT" "$PY" backend/examples/flask_api.py &
+PIDS+=($!)
 
-echo "Starting backend on http://localhost:7117..."
-(cd backend && PORT=7117 python3 examples/flask_api.py) &
-backend_pid=$!
+# --- Launch frontend ---
+log "starting frontend on :$FRONTEND_PORT"
+(cd frontend && PORT="$FRONTEND_PORT" npm run dev) &
+PIDS+=($!)
 
-echo "Starting frontend on http://localhost:7118..."
-(cd frontend && npm run dev) &
-frontend_pid=$!
+# --- Wait for backend ready ---
+for i in $(seq 1 30); do
+  sleep 1
+  if curl -sf "http://127.0.0.1:$BACKEND_PORT/classes" >/dev/null 2>&1; then
+    log "backend ready: http://localhost:$BACKEND_PORT"
+    break
+  fi
+  [ "$i" = 30 ] && fail "backend did not start within 30s — see logs above"
+done
 
-echo "Backend: http://localhost:7117"
-echo "Frontend: http://localhost:7118"
-echo "Press Ctrl+C to stop both servers"
+printf '\n[run-dev] both services up.\n'
+printf '[run-dev]   backend:  http://localhost:%s\n' "$BACKEND_PORT"
+printf '[run-dev]   frontend: http://localhost:%s\n' "$FRONTEND_PORT"
+printf '[run-dev] Ctrl-C to stop.\n\n'
 
-# Wait for both processes. When Ctrl+C is pressed, trap will run cleanup.
 wait
