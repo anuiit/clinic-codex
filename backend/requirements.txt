@@ -16,9 +16,10 @@ flask-cors>=4.0
 torch>=2.1,<2.6
 torchvision>=0.16,<0.21
 
-# SAM family — PyPI only, NO git URLs (causes pip resolver to clone+build → memory spike)
+# SAM family
+# mobile-sam is NOT on PyPI — must install from GitHub source
 segment-anything==1.0
-mobile-sam==1.0
+mobile-sam @ git+https://github.com/ChaoningZhang/MobileSAM.git
 
 # Augmentation — pinned <2.0 (2.x has breaking API changes for our pipeline)
 albumentations>=1.4,<2.0

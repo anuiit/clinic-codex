@@ -126,7 +126,7 @@ backend/.venv/bin/pip install --no-cache-dir --prefer-binary --extra-index-url h
 
 ### 5. Install Image Analysis Tools
 ```bash
-backend/.venv/bin/pip install --no-cache-dir --prefer-binary "segment-anything==1.0" "mobile-sam==1.0" "albumentations>=1.4,<2.0" "timm>=0.9"
+backend/.venv/bin/pip install --no-cache-dir --prefer-binary "segment-anything==1.0" "git+https://github.com/ChaoningZhang/MobileSAM.git" "albumentations>=1.4,<2.0" "timm>=0.9"
 ```
 
 ### 6. Set Up the Web Interface

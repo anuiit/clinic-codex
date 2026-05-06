@@ -80,7 +80,8 @@ if ($cudaVer -ne 'None') { Fail "torch installed with CUDA ($cudaVer) - should b
 # --- Stage 5: SAM family + augmentation + timm ---
 Log "Stage 5/5: segment-anything, mobile-sam, albumentations, timm"
 & $VenvPip install --no-cache-dir --prefer-binary `
-    "segment-anything==1.0" "mobile-sam==1.0" `
+    "segment-anything==1.0" `
+    "git+https://github.com/ChaoningZhang/MobileSAM.git" `
     "albumentations>=1.4,<2.0" "timm>=0.9"
 if ($LASTEXITCODE -ne 0) { Fail "Stage 5 failed - SAM/augmentation" }
 

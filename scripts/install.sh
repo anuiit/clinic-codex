@@ -73,8 +73,10 @@ HAS_CUDA=$("$PY" -c 'import torch; print(torch.version.cuda)' 2>/dev/null || ech
 
 # --- Stage 5: SAM family + augmentation + timm ---
 log "Stage 5/5: segment-anything, mobile-sam, albumentations, timm"
+# mobile-sam is not on PyPI — install from GitHub source
 "$PIP" install --no-cache-dir --prefer-binary \
-  "segment-anything==1.0" "mobile-sam==1.0" \
+  "segment-anything==1.0" \
+  "git+https://github.com/ChaoningZhang/MobileSAM.git" \
   "albumentations>=1.4,<2.0" "timm>=0.9" \
   || fail "Stage 5 failed — SAM/augmentation"
 
