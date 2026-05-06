@@ -76,7 +76,7 @@ def _preprocess_image(
     new_w, new_h = int(w * scale), int(h * scale)
     image = image.resize((new_w, new_h), Image.LANCZOS)
 
-    padded = Image.new("RGB", (image_size, image_size), (128, 128, 128))
+    padded = Image.new("RGB", (image_size, image_size), (255, 255, 255))  # white pad — matches training data
     pad_x = (image_size - new_w) // 2
     pad_y = (image_size - new_h) // 2
     padded.paste(image, (pad_x, pad_y))
