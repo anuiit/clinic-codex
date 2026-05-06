@@ -23,14 +23,14 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: codex-frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        working-directory: codex-frontend
+        working-directory: frontend
         run: npm ci
 
       - name: Build
-        working-directory: codex-frontend
+        working-directory: frontend
         run: npm run build
 
   frontend-lint:
@@ -45,14 +45,14 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: codex-frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        working-directory: codex-frontend
+        working-directory: frontend
         run: npm ci
 
       - name: Lint (pre-existing errors allowed)
-        working-directory: codex-frontend
+        working-directory: frontend
         run: npm run lint
         continue-on-error: true
 
@@ -69,9 +69,9 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        working-directory: frontend_integration_fix/frontend_integration
+        working-directory: backend
         run: pip install -r requirements.txt
 
       - name: Import check (no model weights needed)
-        working-directory: frontend_integration_fix/frontend_integration
+        working-directory: backend
         run: python -c "from codex_model import CodexClassifier; print('import ok')"
