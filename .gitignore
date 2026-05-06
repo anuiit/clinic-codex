@@ -45,6 +45,7 @@ yarn-error.log*
 
 # Build outputs
 dist/
+frontend/dist/
 build/
 *.local
 
@@ -60,8 +61,9 @@ build/
 .env.local
 .env.*.local
 *.pt
+.sisyphus/evidence/
 
 # Preserve canonical source roots
-!codex-frontend/
-!frontend_integration_fix/frontend_integration/
-!frontend_integration_fix/frontend_integration/data/
+!frontend/
+!backend/
+!backend/data/
