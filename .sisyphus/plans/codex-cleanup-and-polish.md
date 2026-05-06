@@ -229,7 +229,7 @@ Max Concurrent: 8 (Wave 2)
 
 ## TODOs
 
-- [ ] 1. Commit current WIP on master + create feature branch
+- [x] 1. Commit current WIP on master + create feature branch
 
   **What to do**:
   - On `master`: `git add -A` to stage all current modifications and untracked files (excluding `.sisyphus/evidence/` per .gitignore once added — but for this commit, include them so nothing is lost; they will be ignored going forward)
@@ -292,7 +292,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: all currently modified
   - Pre-commit: none
 
-- [ ] 2. Verify EXISTING_CODE is duplicate, then archive to _legacy/
+- [x] 2. Verify EXISTING_CODE is duplicate, then archive to _legacy/
 
   **What to do**:
   - Run `diff -rq EXISTING_CODE/ frontend_integration_fix/frontend_integration/` and capture output
