@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, Loader2, ZoomIn, ZoomOut, Maximize2, PenTool, MousePointer2, Trash2 } from 'lucide-react';
 import { getAnalysisById, updateElements } from '../services/storage';
@@ -41,7 +41,32 @@ export default function AnnotationPage() {
   
   const imageRef = useRef<HTMLImageElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const rafRef = useRef<number | null>(null);
+  const pendingTempBboxRef = useRef<[number, number, number, number] | null>(null);
   const t = appText.annotation;
+
+  const getSvgCoordinates = (e: ReactPointerEvent<SVGSVGElement>) => {
+    const pt = e.currentTarget.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = e.currentTarget.getScreenCTM();
+    if (!ctm) return null;
+    const svgPt = pt.matrixTransform(ctm.inverse());
+    return { x: svgPt.x, y: svgPt.y };
+  };
+
+  const scheduleTempBbox = (bbox: [number, number, number, number]) => {
+    pendingTempBboxRef.current = bbox;
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+    }
+    rafRef.current = requestAnimationFrame(() => {
+      if (pendingTempBboxRef.current) {
+        setTempBbox(pendingTempBboxRef.current);
+      }
+      rafRef.current = null;
+    });
+  };
 
   useEffect(() => {
     async function loadData() {
@@ -86,6 +111,14 @@ export default function AnnotationPage() {
     }
   }, [record, elements, focusedIdx, tempBbox, dragState]);
 
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, []);
+
   const getHitHandle = (x: number, y: number, bbox: [number, number, number, number]) => {
     const [bx, by, bw, bh] = bbox;
     const hSize = 12; // slightly larger hit area
@@ -96,30 +129,50 @@ export default function AnnotationPage() {
     return null;
   };
 
-  const handleSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!record) return;
-    const x = e.nativeEvent.offsetX;
-    const y = e.nativeEvent.offsetY;
+  const getHandleHit = (x: number, y: number) => {
+    let bestHit: { idx: number; corner: 'tl' | 'tr' | 'bl' | 'br'; area: number } | null = null;
+    for (const [idx, el] of elements.entries()) {
+      const handle = getHitHandle(x, y, el.bbox);
+      if (!handle) continue;
 
-    if (drawMode) {
-      setDragState({ type: 'draw', idx: elements.length, startX: x, startY: y });
-      setTempBbox([x, y, 0, 0]);
-      return;
-    }
-
-    if (focusedIdx !== null) {
-      const el = elements[focusedIdx];
-      if (el) {
-        const handle = getHitHandle(x, y, el.bbox);
-        if (handle) {
-          setDragState({ type: 'resize', idx: focusedIdx, corner: handle, startX: x, startY: y, origBbox: [...el.bbox] });
-          setTempBbox([...el.bbox]);
-          return;
-        }
+      const [, , bw, bh] = el.bbox;
+      const area = bw * bh;
+      if (!bestHit || area < bestHit.area) {
+        bestHit = { idx, corner: handle, area };
       }
     }
 
-    // Check hit for move or focus
+    return bestHit;
+  };
+
+  const handleSvgPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (!record) return;
+    const coords = getSvgCoordinates(e);
+    if (!coords) return;
+    const { x, y } = coords;
+
+    if (drawMode) {
+      const bbox: [number, number, number, number] = [x, y, 0, 0];
+      setDragState({ type: 'draw', idx: elements.length, startX: x, startY: y });
+      setTempBbox(bbox);
+      pendingTempBboxRef.current = bbox;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    const handleHit = getHandleHit(x, y);
+
+    if (handleHit) {
+      const el = elements[handleHit.idx];
+      const bbox: [number, number, number, number] = [...el.bbox];
+      setFocusedIdx(handleHit.idx);
+      setDragState({ type: 'resize', idx: handleHit.idx, corner: handleHit.corner, startX: x, startY: y, origBbox: bbox });
+      setTempBbox(bbox);
+      pendingTempBboxRef.current = bbox;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
     let hitIdx: number | null = null;
     let minArea = Infinity;
     elements.forEach((el, idx) => {
@@ -134,40 +187,45 @@ export default function AnnotationPage() {
     });
 
     if (hitIdx !== null) {
-      setFocusedIdx(hitIdx);
       const el = elements[hitIdx];
-      setDragState({ type: 'move', idx: hitIdx, startX: x, startY: y, origBbox: [...el.bbox] });
-      setTempBbox([...el.bbox]);
+      const bbox: [number, number, number, number] = [...el.bbox];
+      setFocusedIdx(hitIdx);
+      setDragState({ type: 'move', idx: hitIdx, startX: x, startY: y, origBbox: bbox });
+      setTempBbox(bbox);
+      pendingTempBboxRef.current = bbox;
+      e.currentTarget.setPointerCapture(e.pointerId);
     } else {
       setFocusedIdx(null);
     }
   };
 
-  const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+  const handleSvgPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!record) return;
-    const x = e.nativeEvent.offsetX;
-    const y = e.nativeEvent.offsetY;
+    const coords = getSvgCoordinates(e);
+    if (!coords) return;
+    const { x, y } = coords;
     const [origW, origH] = record.result.image_size;
 
     if (dragState) {
+      let nextBbox: [number, number, number, number] | null = null;
       if (dragState.type === 'draw') {
         const minX = Math.min(dragState.startX, x);
         const minY = Math.min(dragState.startY, y);
         const maxX = Math.max(dragState.startX, x);
         const maxY = Math.max(dragState.startY, y);
-        setTempBbox([
+        nextBbox = [
           Math.max(0, minX),
           Math.max(0, minY),
           Math.min(origW - Math.max(0, minX), maxX - minX),
           Math.min(origH - Math.max(0, minY), maxY - minY)
-        ]);
+        ];
       } else if (dragState.type === 'move' && dragState.origBbox) {
         const dx = x - dragState.startX;
         const dy = y - dragState.startY;
         const [origBx, origBy, bw, bh] = dragState.origBbox;
         const bx = Math.max(0, Math.min(origW - bw, origBx + dx));
         const by = Math.max(0, Math.min(origH - bh, origBy + dy));
-        setTempBbox([bx, by, bw, bh]);
+        nextBbox = [bx, by, bw, bh];
       } else if (dragState.type === 'resize' && dragState.origBbox && dragState.corner) {
         let [bx, by, bw, bh] = dragState.origBbox;
         if (dragState.corner === 'tl') {
@@ -191,10 +249,13 @@ export default function AnnotationPage() {
           bw = Math.min(origW - bx, Math.max(1, x - bx));
           bh = Math.min(origH - by, Math.max(1, y - by));
         }
-        setTempBbox([bx, by, bw, bh]);
+        nextBbox = [bx, by, bw, bh];
+      }
+
+      if (nextBbox) {
+        scheduleTempBbox(nextBbox);
       }
     } else if (!drawMode) {
-      // Hover hit detection
       let hitIdx: number | null = null;
       let minArea = Infinity;
       elements.forEach((el, idx) => {
@@ -209,37 +270,48 @@ export default function AnnotationPage() {
       });
       setHoveredIdx(hitIdx);
       
-      // Update cursor based on hover / corner
       const svg = e.currentTarget;
-      if (svg) {
-        let cursor = 'default';
-        if (focusedIdx !== null) {
-          const el = elements[focusedIdx];
-          if (el) {
-            const handle = getHitHandle(x, y, el.bbox);
-            if (handle === 'tl' || handle === 'br') cursor = 'nwse-resize';
-            else if (handle === 'tr' || handle === 'bl') cursor = 'nesw-resize';
-          }
+      let cursor = 'default';
+      if (focusedIdx !== null) {
+        const el = elements[focusedIdx];
+        if (el) {
+          const handle = getHitHandle(x, y, el.bbox);
+          if (handle === 'tl' || handle === 'br') cursor = 'nwse-resize';
+          else if (handle === 'tr' || handle === 'bl') cursor = 'nesw-resize';
         }
-        if (cursor === 'default' && hitIdx !== null) {
-          cursor = 'move';
-        }
-        svg.style.cursor = cursor;
       }
+      if (cursor === 'default' && hitIdx !== null) {
+        cursor = 'move';
+      }
+      svg.style.cursor = cursor;
     } else {
-      const svg = e.currentTarget;
-      if (svg) svg.style.cursor = 'crosshair';
+      e.currentTarget.style.cursor = 'crosshair';
     }
   };
 
-  const handleSvgMouseUp = () => {
-    if (!dragState || !tempBbox) return;
-    
+  const handleSvgPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
+    const coords = getSvgCoordinates(e);
+    if (!coords) return;
+
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    const finalTempBbox = pendingTempBboxRef.current ?? tempBbox;
+    if (!dragState || !finalTempBbox) {
+      pendingTempBboxRef.current = null;
+      return;
+    }
+
     const newElements = [...elements];
     if (dragState.type === 'draw') {
-      if (tempBbox[2] > 5 && tempBbox[3] > 5) {
+      if (finalTempBbox[2] > 5 && finalTempBbox[3] > 5) {
         newElements.push({
-          bbox: tempBbox,
+          bbox: finalTempBbox,
           class_name: 'unknown',
           class_label: 0,
           confidence: 1.0,
@@ -249,12 +321,13 @@ export default function AnnotationPage() {
         setFocusedIdx(newElements.length - 1);
       }
     } else if ((dragState.type === 'move' || dragState.type === 'resize') && dragState.idx < newElements.length) {
-      newElements[dragState.idx].bbox = tempBbox;
+      newElements[dragState.idx].bbox = finalTempBbox;
     }
-    
+
     setElements(newElements);
     setDragState(null);
     setTempBbox(null);
+    pendingTempBboxRef.current = null;
   };
 
   useEffect(() => {
@@ -363,10 +436,9 @@ export default function AnnotationPage() {
                 className="absolute left-0 top-0 w-full h-full"
                 viewBox={`0 0 ${record.result.image_size[0]} ${record.result.image_size[1]}`}
                 style={{ width: '100%', height: '100%' }}
-                onMouseDown={handleSvgMouseDown}
-                onMouseMove={handleSvgMouseMove}
-                onMouseUp={handleSvgMouseUp}
-                onMouseLeave={handleSvgMouseUp}
+                onPointerDown={handleSvgPointerDown}
+                onPointerMove={handleSvgPointerMove}
+                onPointerUp={handleSvgPointerUp}
               >
                 {elements.map((el, idx) => {
                   const [x, y, w, h] = idx === dragState?.idx && dragState.type !== 'draw' && tempBbox ? tempBbox : el.bbox;
@@ -378,10 +450,10 @@ export default function AnnotationPage() {
                       <rect x={x} y={y} width={w} height={h} fill="none" stroke={strokeColor} strokeWidth={isFocused ? 3 : 2} />
                       {isFocused && !drawMode && (
                         <>
-                          <rect x={x-4} y={y-4} width={8} height={8} fill="#ffffff" className="cursor-nwse-resize" />
-                          <rect x={x+w-4} y={y-4} width={8} height={8} fill="#ffffff" className="cursor-nesw-resize" />
-                          <rect x={x-4} y={y+h-4} width={8} height={8} fill="#ffffff" className="cursor-nesw-resize" />
-                          <rect x={x+w-4} y={y+h-4} width={8} height={8} fill="#ffffff" className="cursor-nwse-resize" />
+                          <rect x={x-5} y={y-5} width={10} height={10} fill="#ffffff" className="cursor-nwse-resize" />
+                          <rect x={x+w-5} y={y-5} width={10} height={10} fill="#ffffff" className="cursor-nesw-resize" />
+                          <rect x={x-5} y={y+h-5} width={10} height={10} fill="#ffffff" className="cursor-nesw-resize" />
+                          <rect x={x+w-5} y={y+h-5} width={10} height={10} fill="#ffffff" className="cursor-nwse-resize" />
                         </>
                       )}
                       <rect x={x} y={Math.max(0, y - 24)} width={28} height={24} fill={strokeColor} />
