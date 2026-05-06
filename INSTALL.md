@@ -6,7 +6,7 @@ Welcome! You don't need to be a programmer to set up the Clinic Codex annotation
 
 Before installing, you need to have the Clinic Codex files on your computer.
 
-1. **Download the project**: Go to the project page on GitHub, click the green **"Code"** button, and select **"Download ZIP"**.
+1. **Download the project**: Go to [https://github.com/anuiit/clinic-codex](https://github.com/anuiit/clinic-codex), click the green **"Code"** button, and select **"Download ZIP"**.
 2. **Extract the files**: Right-click the downloaded ZIP file and select "Extract All" (Windows) or double-click it (Mac). Choose a folder you'll remember, like your Desktop.
 3. **Open the folder**: Open the extracted `clinic-codex` folder. This is your project folder.
 
