@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { SegmentResult, ClassifyResult, ClassesResult, SimilarResult, TrustResult } from '../types';
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:7117';
 
 export async function segmentGlyph(file: File): Promise<SegmentResult> {
   const form = new FormData();

@@ -33,7 +33,7 @@ cleanup() {
 trap 'cleanup' SIGINT SIGTERM
 
 echo "Starting backend on http://localhost:7117..."
-(cd backend && PORT=7117 python examples/flask_api.py) &
+(cd backend && PORT=7117 python3 examples/flask_api.py) &
 backend_pid=$!
 
 echo "Starting frontend on http://localhost:7118..."

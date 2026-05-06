@@ -233,7 +233,7 @@ class CodexClassifier:
         for sim_val, class_idx in zip(top_values.tolist(), top_indices.tolist()):
             top_list.append({
                 "class_name": self._class_names[class_idx],
-                "class_label": class_idx,
+                "class_label": self._label_index[class_idx],
                 "confidence": sim_val,
                 "rejected": sim_val < self._rejection_threshold,
             })
@@ -283,7 +283,7 @@ class CodexClassifier:
             for sim_val, class_idx in zip(top_values.tolist(), top_indices.tolist()):
                 top_list.append({
                     "class_name": self._class_names[class_idx],
-                    "class_label": class_idx,
+                    "class_label": self._label_index[class_idx],
                     "confidence": sim_val,
                     "rejected": sim_val < self._rejection_threshold,
                 })

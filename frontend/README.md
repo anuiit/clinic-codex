@@ -28,7 +28,7 @@ npm install
 The frontend uses the following environment variable to communicate with the backend:
 
 - `VITE_API_BASE_URL`: The base URL of the backend API.
-  - Default: `http://localhost:5000`
+  - Default: `http://localhost:7117`
   - Ensure this is set correctly if your backend is running on a different port or host.
 
 ## Development

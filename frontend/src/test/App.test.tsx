@@ -3,8 +3,13 @@ import { render } from '@testing-library/react'
 import App from '../App'
 
 describe('App', () => {
-  it('renders without crashing', () => {
+  it('renders without crashing and mounts a root element', () => {
     const { container } = render(<App />)
-    expect(container).toBeTruthy()
+    expect(container.firstChild).not.toBeNull()
+  })
+
+  it('renders a main landmark element', () => {
+    const { container } = render(<App />)
+    expect(container.querySelector('main')).not.toBeNull()
   })
 })
