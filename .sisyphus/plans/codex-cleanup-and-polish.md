@@ -431,7 +431,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: all of `frontend/` (renamed) + any source files updated to drop "codex-frontend" references
   - Pre-commit: history check passes
 
-- [ ] 4. git mv backend flatten — frontend_integration_fix/frontend_integration/ → backend/
+- [x] 4. git mv backend flatten — frontend_integration_fix/frontend_integration/ → backend/
 
   **What to do**:
   - Pre-flight: `grep -r "frontend_integration_fix\|from frontend_integration\|import frontend_integration" . --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.sisyphus --exclude-dir=_legacy` to find Python imports — capture to evidence
@@ -498,7 +498,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: all of `backend/` + any updated import paths
   - Pre-commit: pre-flight grep + history check pass
 
-- [ ] 5. Move dev-scripts + archive sam_glyph_test
+- [x] 5. Move dev-scripts + archive sam_glyph_test
 
   **What to do**:
   - `mkdir dev-scripts`
@@ -566,7 +566,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `dev-scripts/`, `_legacy/sam_glyph_test/`
   - Pre-commit: presence checks
 
-- [ ] 6. Update CI workflow paths
+- [x] 6. Update CI workflow paths
 
   **What to do**:
   - Edit `.github/workflows/smoke.yml`: replace all `codex-frontend` with `frontend`, all `frontend_integration_fix/frontend_integration` with `backend`
@@ -627,7 +627,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `.github/workflows/smoke.yml`
   - Pre-commit: yaml parse + grep checks
 
-- [ ] 7. Backend env-driven config (PORT/HOST/CORS/MODEL_DIR)
+- [x] 7. Backend env-driven config (PORT/HOST/CORS/MODEL_DIR)
 
   **What to do**:
   - Edit `backend/examples/flask_api.py`: read `PORT` (default 7117), `HOST` (default `0.0.0.0`), `CORS_ORIGINS` (comma-separated, default `http://localhost:7118`), `MODEL_DIR` (default `./models` or current path) from env via `os.environ.get`
@@ -719,7 +719,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `backend/examples/flask_api.py`, `backend/.env.example`
   - Pre-commit: all 3 QA scenarios pass
 
-- [ ] 8. Frontend Vite port 7118 + .env.example
+- [x] 8. Frontend Vite port 7118 + .env.example
 
   **What to do**:
   - Edit `frontend/vite.config.ts` to add `server: { port: 7118, strictPort: false }` to defineConfig
@@ -783,7 +783,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `frontend/vite.config.ts`, `frontend/.env.example`
   - Pre-commit: QA scenario passes
 
-- [ ] 9. Annotation bug fix #1 — pointer events + setPointerCapture
+- [x] 9. Annotation bug fix #1 — pointer events + setPointerCapture
 
   **What to do**:
   - In `frontend/src/pages/AnnotationPage.tsx`: migrate `handleSvgMouseDown` → `handleSvgPointerDown`, `handleSvgMouseMove` → `handleSvgPointerMove`, `handleSvgMouseUp` → `handleSvgPointerUp`
@@ -866,7 +866,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `frontend/src/pages/AnnotationPage.tsx`, `frontend/src/pages/__tests__/AnnotationPage.test.tsx` (new)
   - Pre-commit: tsc + test pass
 
-- [ ] 10. Annotation bug fix #2 — scan-all handle hit-test
+- [x] 10. Annotation bug fix #2 — scan-all handle hit-test
 
   **What to do**:
   - In `frontend/src/pages/AnnotationPage.tsx` `handleSvgPointerDown` (post-T9): BEFORE checking which annotation is under cursor for body-hit, iterate over ALL annotations and check if cursor is on any of their resize handles
@@ -930,7 +930,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `frontend/src/pages/AnnotationPage.tsx`, test file
   - Pre-commit: tsc + test pass
 
-- [ ] 11. Annotation bug fix #3 — getScreenCTM coord mapping
+- [x] 11. Annotation bug fix #3 — getScreenCTM coord mapping
 
   **What to do**:
   - In `frontend/src/pages/AnnotationPage.tsx` pointer handlers: replace all `e.nativeEvent.offsetX/offsetY` with a coord conversion using `svgEl.getScreenCTM().inverse()` applied to `e.clientX, e.clientY`
@@ -998,7 +998,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `frontend/src/pages/AnnotationPage.tsx`, test file
   - Pre-commit: tsc + test pass
 
-- [ ] 12. Annotation polish — handle size harmonization + RAF throttle
+- [x] 12. Annotation polish — handle size harmonization + RAF throttle
 
   **What to do**:
   - In `frontend/src/pages/AnnotationPage.tsx`: harmonize handle visual size and hit area. Currently visual is ~8x8 and hit-test radius is 12. Either: (a) increase visual to match hit area (`width=12 height=12`), or (b) keep visual 8 but make hit area an invisible larger rect (12x12) sibling. Choose (a) for simplicity unless visually too chunky.
@@ -1071,7 +1071,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `frontend/src/pages/AnnotationPage.tsx`
   - Pre-commit: tsc + tests pass
 
-- [ ] 13. Reconcile image preprocessing (gray vs white pad)
+- [x] 13. Reconcile image preprocessing (gray vs white pad)
 
   **What to do**:
   - Locate `CodexClassifier._preprocess_image` and `InferenceEngine.preprocess` in `backend/` (paths likely `backend/codex_model/` and `backend/codex_pipeline/`)
@@ -1149,7 +1149,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: classifier file + engine file + new pytest
   - Pre-commit: pytest + smoke pass
 
-- [ ] 14. Update .gitignore (dist, evidence)
+- [x] 14. Update .gitignore (dist, evidence)
 
   **What to do**:
   - Append to `.gitignore`:

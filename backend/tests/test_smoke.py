@@ -1,5 +1,5 @@
 # type: ignore
-# pyright: reportMissingImports=false, reportUnknownMemberType=false, reportUndefinedVariable=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportGeneralTypeIssues=false, reportAttributeAccessIssue=false
+# pyright: reportMissingImports=false
 # The test uses dynamic module stubs to avoid importing heavy ML deps in CI; keep
 # diagnostics suppressed for this file.
 import importlib

@@ -6,7 +6,22 @@
     "ses_2032c8bb7ffeUCFPzlUTjIoAMx",
     "ses_2032a4bd7ffeOHNi07iA6lUW4x",
     "ses_203263bc5ffey2nEXerH7KqZZ7",
-    "ses_20324368dffeQMry234RcG8x35"
+    "ses_20324368dffeQMry234RcG8x35",
+    "ses_2031eebebffeD3pK67n6tE2Avc",
+    "ses_2031cc8a0ffeitFCIBQoZ1Vsat",
+    "ses_2031b87f9ffesvAaexH966psZQ",
+    "ses_203199eedffeZyTHwUz9fLHV6z",
+    "ses_20316cf5cffe9jUkxyVdb1YaDU",
+    "ses_203105d67ffeRiAyxCZbgKgmER",
+    "ses_2030e52adffebAoVDZaQpCCsQX",
+    "ses_2030c258affeKzspLa3AEH74Se",
+    "ses_203074f39ffeEbYzB1m4nFHMxH",
+    "ses_203072b0dffehZDpMF31gvoVn8",
+    "ses_203070c7bffe4mfUfD49hDJsAJ",
+    "ses_203077aedffeNiLNzxtIuUCueG",
+    "ses_202ffa4bbffeDUp7ht5ZCcHGOH",
+    "ses_202ffa38fffehrQoV5kMVmoq5f",
+    "ses_202f8d926ffeiDfphu2EOj4clT"
   ],
   "plan_name": "codex-cleanup-and-polish",
   "agent": "atlas",
@@ -46,6 +61,32 @@
       "agent": "Sisyphus-Junior",
       "category": "quick",
       "updated_at": "2026-05-06T10:38:00.772Z"
+    },
+    "todo:7": {
+      "task_key": "todo:7",
+      "task_label": "7",
+      "task_title": "Backend env-driven config (PORT/HOST/CORS/MODEL_DIR)",
+      "session_id": "ses_203199eedffeZyTHwUz9fLHV6z",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-06T10:48:33.570Z"
+    },
+    "todo:9": {
+      "task_key": "todo:9",
+      "task_label": "9",
+      "task_title": "Annotation bug fix #1 — pointer events + setPointerCapture",
+      "session_id": "ses_20316cf5cffe9jUkxyVdb1YaDU",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-05-06T10:56:14.294Z"
+    },
+    "todo:15": {
+      "task_key": "todo:15",
+      "task_label": "15",
+      "task_title": "`scripts/run-dev.sh` — one-command dev launcher",
+      "session_id": "ses_202f8d926ffeiDfphu2EOj4clT",
+      "agent": "oracle",
+      "updated_at": "2026-05-06T11:23:58.296Z"
     }
   }
 }
