@@ -6,11 +6,9 @@ Welcome! You don't need to be a programmer to set up the Clinic Codex annotation
 
 Before installing, you need to have the Clinic Codex files on your computer.
 
-1. **Download the project**:
-   - If you know how to use **Git**, run: `git clone https://github.com/YOUR_REPO_URL`
-   - Otherwise, go to the project page on GitHub, click the green **"Code"** button, and select **"Download ZIP"**.
-2. **Extract the files**: If you downloaded a ZIP file, right-click it and select "Extract All" to a folder on your computer.
-3. **Open the folder**: Make sure you are inside the main `clinic-codex` folder.
+1. **Download the project**: Go to the project page on GitHub, click the green **"Code"** button, and select **"Download ZIP"**.
+2. **Extract the files**: Right-click the downloaded ZIP file and select "Extract All" (Windows) or double-click it (Mac). Choose a folder you'll remember, like your Desktop.
+3. **Open the folder**: Open the extracted `clinic-codex` folder. This is your project folder.
 
 ## Step 1: Install Necessary Software
 
@@ -47,13 +45,17 @@ You'll need three tools installed. They are standard pieces of software used by 
 Before you start the tool, we need to make sure one configuration file is correct.
 
 1. Go into the `frontend` folder inside the project.
-2. Look for a file named `.env`. If it doesn't exist, create a new text file and name it `.env`.
-3. Open this file with a text editor (like Notepad or TextEdit).
-4. Make sure it contains exactly this line:
-   ```text
+2. Look for a file named `.env`.
+   - **On Mac**: In Finder, press **Cmd + Shift + .** to show hidden files (files starting with a dot).
+   - **On Windows**: In File Explorer, go to View → check "Hidden items".
+   - **On Linux**: In your file manager, press **Ctrl + H** to show hidden files.
+3. If the `.env` file doesn't exist, create a new text file and name it `.env` (no other extension).
+4. Open this file with a text editor (like Notepad or TextEdit).
+5. Make sure it contains exactly this line:
+   ```
    VITE_API_BASE_URL=http://localhost:7117
    ```
-5. Save and close the file.
+6. Save and close the file.
 
 ---
 
