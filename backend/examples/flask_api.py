@@ -32,7 +32,23 @@ from codex_model import CodexClassifier
 from codex_pipeline.segmentation import MobileSAMSegmenter
 
 app = Flask(__name__)
-clf = CodexClassifier()
+
+# Environment-driven configuration
+# PORT, HOST, CORS_ORIGINS, MODEL_DIR
+PORT = int(os.environ.get("PORT", "7117"))
+HOST = os.environ.get("HOST", "0.0.0.0")
+_raw_origins = os.environ.get("CORS_ORIGINS", "http://localhost:7118")
+# Allow comma-separated origins
+ALLOWED_CORS_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+MODEL_DIR = os.environ.get("MODEL_DIR", "")
+
+# Initialize classifier with optional model_dir
+if MODEL_DIR:
+    clf = CodexClassifier(model_dir=MODEL_DIR)
+else:
+    clf = CodexClassifier()
+
 sam_segmenter: MobileSAMSegmenter | None = None
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 SAMPLE_INDEX: dict[str, list[dict[str, str]]] = {}
@@ -80,7 +96,13 @@ print(f"Sample index: {len(SAMPLE_INDEX)} classes, {sum(len(v) for v in SAMPLE_I
 
 @app.after_request
 def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5173"
+    origin = request.headers.get("Origin", "")
+    # If the request Origin matches one of the allowed origins, echo it.
+    if origin and origin in ALLOWED_CORS_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        # Fallback to the first allowed origin (useful for simple clients)
+        response.headers["Access-Control-Allow-Origin"] = ALLOWED_CORS_ORIGINS[0] if ALLOWED_CORS_ORIGINS else ""
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
@@ -330,7 +352,7 @@ def get_classes():
 
 
 if __name__ == "__main__":
-    print("Codex Classifier API - http://localhost:5000")
+    print(f"Codex Classifier API - http://{HOST}:{PORT}")
     print("  POST /classify, /classify-batch, /segment, /similar, /trust")
     print("  GET  /classes")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host=HOST, port=PORT, debug=False)
