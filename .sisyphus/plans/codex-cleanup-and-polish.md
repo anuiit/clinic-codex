@@ -1211,7 +1211,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `.gitignore` + tracked-removal of `frontend/dist/*`
   - Pre-commit: assertions pass
 
-- [ ] 15. `scripts/run-dev.sh` — one-command dev launcher
+- [x] 15. `scripts/run-dev.sh` — one-command dev launcher
 
   **What to do**:
   - Create `scripts/run-dev.sh` (executable, `chmod +x`)
@@ -1299,7 +1299,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `scripts/run-dev.sh`, `logs/.gitkeep`
   - Pre-commit: both QA scenarios pass
 
-- [ ] 16. `scripts/install.sh` + `scripts/install.ps1` + `scripts/download-weights.sh`
+- [x] 16. `scripts/install.sh` + `scripts/install.ps1` + `scripts/download-weights.sh`
 
   **What to do**:
   - **`scripts/install.sh`** (Mac/Linux, executable):
@@ -1393,7 +1393,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `scripts/install.sh`, `scripts/install.ps1`, `scripts/download-weights.sh`
   - Pre-commit: install QA scenario passes
 
-- [ ] 17. Frontend test scaffold (Vitest + RTL)
+- [x] 17. Frontend test scaffold (Vitest + RTL)
 
   **What to do**:
   - Add to `frontend/package.json` devDependencies: `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`, `@vitest/ui` (optional)
@@ -1457,7 +1457,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `frontend/package.json`, `frontend/package-lock.json`, `frontend/vitest.config.ts`, `frontend/src/test/setup.ts`, `frontend/src/test/smoke.test.ts`
   - Pre-commit: QA passes
 
-- [ ] 18. Backend test scaffold (pytest)
+- [x] 18. Backend test scaffold (pytest)
 
   **What to do**:
   - Add `backend/requirements-dev.txt` with `pytest>=8`, `pytest-cov` (optional)
@@ -1515,7 +1515,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `backend/requirements-dev.txt`, `backend/tests/__init__.py`, `backend/tests/test_smoke.py`, `backend/pytest.ini` (or pyproject section)
   - Pre-commit: QA passes
 
-- [ ] 19. README rewrite — dual-audience
+- [x] 19. README rewrite — dual-audience
 
   **What to do**:
   - Rewrite root `README.md` with two clear sections:
@@ -1594,7 +1594,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `README.md`
   - Pre-commit: structure check passes
 
-- [ ] 20. INSTALL.md — non-technical install guide
+- [x] 20. INSTALL.md — non-technical install guide
 
   **What to do**:
   - Create root `INSTALL.md` (French primary)
@@ -1667,7 +1667,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `INSTALL.md`
   - Pre-commit: structure check passes
 
-- [ ] 21. EMBEDDING-READINESS.md — similarity infrastructure design
+- [x] 21. EMBEDDING-READINESS.md — similarity infrastructure design
 
   **What to do**:
   - Create root `EMBEDDING-READINESS.md` (English or French — engineer audience)
@@ -1749,6 +1749,8 @@ Max Concurrent: 8 (Wave 2)
 ## Final Verification Wave (MANDATORY — after ALL implementation tasks)
 
 > 4 review agents run in PARALLEL. ALL must APPROVE. Present consolidated results to user and get explicit "okay" before completing.
+
+> **NOTE (2026-05-06): F1-F4 SKIPPED by user decision.** User explicitly requested pragmatic close-out without Final Wave review. All 21 implementation tasks completed and committed. Boulder superseded by `launch-fix-and-boulder-closeout` plan.
 
 - [ ] F1. **Plan Compliance Audit** — `oracle`
   Read this plan end-to-end. For each "Must Have": verify implementation exists (read file, curl endpoint, run command). For each "Must NOT Have": search codebase for forbidden patterns — reject with file:line if found. Specifically: `grep -r "5000\|5173\|codex-frontend\|frontend_integration_fix" .` must return zero results in source files. Verify all evidence files exist in `.sisyphus/evidence/codex-cleanup/`.
