@@ -366,7 +366,7 @@ Max Concurrent: 8 (Wave 2)
   - Files: `_legacy/EXISTING_CODE/`, `_legacy/README.md`
   - Pre-commit: diff verification passes
 
-- [ ] 3. git mv codex-frontend/ → frontend/
+- [x] 3. git mv codex-frontend/ → frontend/
 
   **What to do**:
   - `git mv codex-frontend frontend` (single atomic move)

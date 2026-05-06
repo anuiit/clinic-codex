@@ -4,7 +4,9 @@
   "session_ids": [
     "ses_20348f627ffe1LjremVnAktZOR",
     "ses_2032c8bb7ffeUCFPzlUTjIoAMx",
-    "ses_2032a4bd7ffeOHNi07iA6lUW4x"
+    "ses_2032a4bd7ffeOHNi07iA6lUW4x",
+    "ses_203263bc5ffey2nEXerH7KqZZ7",
+    "ses_20324368dffeQMry234RcG8x35"
   ],
   "plan_name": "codex-cleanup-and-polish",
   "agent": "atlas",
@@ -26,6 +28,24 @@
       "agent": "Sisyphus-Junior",
       "category": "quick",
       "updated_at": "2026-05-06T10:30:26.191Z"
+    },
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "git mv codex-frontend/ → frontend/",
+      "session_id": "ses_203263bc5ffey2nEXerH7KqZZ7",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-06T10:35:31.436Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "git mv backend flatten — frontend_integration_fix/frontend_integration/ → backend/",
+      "session_id": "ses_20324368dffeQMry234RcG8x35",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-06T10:38:00.772Z"
     }
   }
 }
