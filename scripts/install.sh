@@ -1,65 +1,94 @@
 #!/usr/bin/env bash
-# Mac / Linux installer for clinic-codex
-set -euo pipefail
+# Clinic Codex installer — staged, CPU-only, WSL-safe.
+# Each stage is checkpointed. If interrupted, re-run is safe (idempotent).
 
-REQUIRED_PY_MAJOR=3
-REQUIRED_PY_MINOR=10
-REQUIRED_NODE_MAJOR=18
+set -u  # do NOT enable -e; explicit error handling per stage
+set -o pipefail
 
-command_exists() { command -v "$1" >/dev/null 2>&1; }
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
 
-echo "Checking system prerequisites..."
+log()  { printf '\n[install] %s\n' "$*"; }
+fail() { printf '\n[install] ERROR: %s\n' "$*" >&2; exit 1; }
 
-if command_exists python3; then
-  PY_VER_OUTPUT=$(python3 --version 2>&1)
-  # python3 X.Y.Z
-  PY_MAJOR=$(echo "$PY_VER_OUTPUT" | awk '{print $2}' | cut -d. -f1)
-  PY_MINOR=$(echo "$PY_VER_OUTPUT" | awk '{print $2}' | cut -d. -f2)
-  if [ "$PY_MAJOR" -lt "$REQUIRED_PY_MAJOR" ] || { [ "$PY_MAJOR" -eq "$REQUIRED_PY_MAJOR" ] && [ "$PY_MINOR" -lt "$REQUIRED_PY_MINOR" ]; }; then
-    echo "ERROR: Python >= ${REQUIRED_PY_MAJOR}.${REQUIRED_PY_MINOR} is required. Found: $PY_VER_OUTPUT"
-    exit 1
+# --- Stage 0: Pre-flight checks ---
+log "Stage 0/5: pre-flight checks"
+
+# Find Python 3.10 or 3.11 (refuse 3.12+, 3.14, system fallbacks)
+PYTHON=""
+for candidate in python3.11 python3.10; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PYTHON="$candidate"; break
   fi
+done
+[ -n "$PYTHON" ] || fail "Need python3.10 or python3.11. Install: sudo apt install python3.11 python3.11-venv"
+
+# Verify version (defense against shims)
+PYVER=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+case "$PYVER" in
+  3.10|3.11) ;;
+  *) fail "Found $PYTHON but reports version $PYVER. Need 3.10 or 3.11." ;;
+esac
+log "Using $PYTHON ($PYVER)"
+
+# Disk space check (need ~2GB)
+AVAIL_KB=$(df -k . | awk 'NR==2 {print $4}')
+[ "$AVAIL_KB" -gt 2000000 ] || fail "Need >=2GB free disk. Have $((AVAIL_KB/1024))MB."
+
+# --- Stage 1: venv ---
+log "Stage 1/5: venv at backend/.venv"
+if [ ! -x backend/.venv/bin/python ]; then
+  "$PYTHON" -m venv backend/.venv || fail "venv creation failed"
 else
-  echo "ERROR: python3 not found. Please install Python ${REQUIRED_PY_MAJOR}.${REQUIRED_PY_MINOR}+"
-  exit 1
+  log "  reusing existing venv"
+fi
+PIP="backend/.venv/bin/pip"
+PY="backend/.venv/bin/python"
+
+# Best-effort pip upgrade (don't fail install if this fails)
+"$PIP" install --quiet --upgrade pip 2>/dev/null || log "  pip upgrade skipped (network or permission)"
+
+# --- Stage 2: core utils (small, fast, low risk) ---
+log "Stage 2/5: core utils (numpy, pillow, scipy, pyyaml, tqdm)"
+"$PIP" install --no-cache-dir --prefer-binary \
+  "numpy>=1.24,<2.5" "pillow>=10.0" "pyyaml>=6.0" "scipy>=1.11" "tqdm>=4.66" \
+  || fail "Stage 2 failed — core utils"
+
+# --- Stage 3: web (flask) ---
+log "Stage 3/5: flask + flask-cors"
+"$PIP" install --no-cache-dir --prefer-binary \
+  "flask>=3.0,<4.0" "flask-cors>=4.0" \
+  || fail "Stage 3 failed — flask"
+
+# --- Stage 4: torch CPU (the big one — ~200MB, this is where WSL crashed before) ---
+log "Stage 4/5: torch CPU wheels (~200MB download — be patient)"
+"$PIP" install --no-cache-dir --prefer-binary \
+  --extra-index-url https://download.pytorch.org/whl/cpu \
+  "torch>=2.1,<2.6" "torchvision>=0.16,<0.21" \
+  || fail "Stage 4 failed — torch. Re-run script to resume."
+
+# Sanity: confirm CPU not CUDA
+HAS_CUDA=$("$PY" -c 'import torch; print(torch.version.cuda)' 2>/dev/null || echo "import-failed")
+[ "$HAS_CUDA" = "None" ] || fail "torch installed with CUDA ($HAS_CUDA) — should be CPU. Wipe venv and retry."
+
+# --- Stage 5: SAM family + augmentation + timm ---
+log "Stage 5/5: segment-anything, mobile-sam, albumentations, timm"
+"$PIP" install --no-cache-dir --prefer-binary \
+  "segment-anything==1.0" "mobile-sam==1.0" \
+  "albumentations>=1.4,<2.0" "timm>=0.9" \
+  || fail "Stage 5 failed — SAM/augmentation"
+
+# --- Frontend (idempotent npm) ---
+log "Frontend: npm install (idempotent)"
+if [ ! -d frontend/node_modules ] || [ -z "$(ls -A frontend/node_modules 2>/dev/null)" ]; then
+  (cd frontend && npm install) || fail "npm install failed"
+else
+  log "  frontend/node_modules present — skipping (delete it to force reinstall)"
 fi
 
-if command_exists node; then
-  NODE_VER_OUTPUT=$(node --version 2>&1)
-  # vX.Y.Z
-  NODE_MAJOR=$(echo "$NODE_VER_OUTPUT" | sed 's/^v//' | cut -d. -f1)
-  if [ "$NODE_MAJOR" -lt "$REQUIRED_NODE_MAJOR" ]; then
-    echo "ERROR: Node >= ${REQUIRED_NODE_MAJOR} is required. Found: $NODE_VER_OUTPUT"
-    exit 1
-  fi
-else
-  echo "ERROR: node not found. Please install Node ${REQUIRED_NODE_MAJOR}+"
-  exit 1
-fi
+# --- Final import sanity ---
+log "Sanity: importing all critical modules"
+"$PY" -c "import flask, torch, torchvision, mobile_sam, segment_anything, albumentations, timm; print('all imports OK')" \
+  || fail "Sanity import failed — see error above"
 
-echo "Installing backend Python dependencies..."
-if [ -f backend/requirements.txt ]; then
-  python3 -m pip install --upgrade pip
-  python3 -m pip install -r backend/requirements.txt
-else
-  echo "WARNING: backend/requirements.txt not found — skipping pip install"
-fi
-
-if [ -d frontend ]; then
-  echo "Installing frontend npm dependencies..."
-  pushd frontend >/dev/null
-  if command_exists npm; then
-    npm install
-  else
-    echo "ERROR: npm not found. Install Node.js which includes npm."
-    popd >/dev/null
-    exit 1
-  fi
-  popd >/dev/null
-else
-  echo "WARNING: frontend/ directory not found — skipping npm install"
-fi
-
-echo "\n✓ Installation complete. Next steps:"
-echo "  - Run the dev server: bash scripts/run-dev.sh"
-echo "  - If you need to download model weights: bash scripts/download-weights.sh"
+log "DONE. Launch with: bash scripts/run-dev.sh"

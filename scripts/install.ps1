@@ -1,66 +1,104 @@
 <#
-Windows PowerShell installer (best-effort).
-# Note: Windows support is best-effort
+.SYNOPSIS
+Clinic Codex Windows installer — staged, CPU-only, WSL-safe equivalent.
+Each stage is checkpointed. If interrupted, re-run is safe (idempotent).
 #>
 param()
 
-function Command-Exists {
-    param([string]$cmd)
-    $null -ne (Get-Command $cmd -ErrorAction SilentlyContinue)
-}
+$ErrorActionPreference = 'Stop'
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $RepoRoot
 
-Write-Output "Checking system prerequisites..."
+function Log  { param([string]$msg) Write-Host "`n[install] $msg" }
+function Fail { param([string]$msg) Write-Error "[install] ERROR: $msg"; exit 1 }
 
-if (Command-Exists -cmd "python") {
-    $py = python --version 2>&1
-    if ($py -match 'Python ([0-9]+)\.([0-9]+)') {
-        $major = [int]$matches[1]
-        $minor = [int]$matches[2]
-        if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 10)) {
-            Write-Error "ERROR: Python >= 3.10 is required. Found: $py"
-            exit 1
+# --- Stage 0: Pre-flight checks ---
+Log "Stage 0/5: pre-flight checks"
+
+# Find Python 3.10 or 3.11 via py launcher or direct command
+$Python = $null
+foreach ($candidate in @('py -3.11', 'py -3.10', 'python')) {
+    $parts = $candidate -split ' '
+    $cmd = $parts[0]; $args_ = $parts[1..($parts.Length-1)]
+    try {
+        $ver = & $cmd @args_ --version 2>&1
+        if ($ver -match 'Python (3\.(10|11))') {
+            $Python = @{ cmd = $cmd; args = $args_ }
+            Log "Using $candidate ($ver)"
+            break
         }
-    }
+    } catch {}
+}
+if (-not $Python) { Fail "Need Python 3.10 or 3.11. Install from python.org and ensure 'py' launcher is available." }
+
+# Verify version is not 3.12+
+$verCheck = & $Python.cmd @($Python.args) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>&1
+if ($verCheck -notmatch '^3\.(10|11)$') { Fail "Python reports version $verCheck — need 3.10 or 3.11." }
+
+# Disk space check (~2GB needed)
+$drive = (Get-Item .).PSDrive.Name
+$freeGB = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
+if ($freeGB -lt 2) { Fail "Need >=2GB free disk. Have ${freeGB}GB." }
+
+# --- Stage 1: venv ---
+Log "Stage 1/5: venv at backend\.venv"
+$VenvPy  = Join-Path $RepoRoot 'backend\.venv\Scripts\python.exe'
+$VenvPip = Join-Path $RepoRoot 'backend\.venv\Scripts\pip.exe'
+if (-not (Test-Path $VenvPy)) {
+    & $Python.cmd @($Python.args) -m venv backend\.venv
+    if ($LASTEXITCODE -ne 0) { Fail "venv creation failed" }
 } else {
-    Write-Error "ERROR: python not found. Please install Python 3.10+"
-    exit 1
+    Log "  reusing existing venv"
 }
 
-if (Command-Exists -cmd "node") {
-    $node = node --version
-    if ($node -match 'v([0-9]+)') {
-        $nodeMajor = [int]$matches[1]
-        if ($nodeMajor -lt 18) {
-            Write-Error "ERROR: Node >= 18 is required. Found: $node"
-            exit 1
-        }
-    }
-} else {
-    Write-Error "ERROR: node not found. Please install Node.js v18+"
-    exit 1
-}
+# Best-effort pip upgrade
+try { & $VenvPip install --quiet --upgrade pip 2>$null } catch { Log "  pip upgrade skipped" }
 
-Write-Output "Installing backend Python dependencies..."
-if (Test-Path "backend/requirements.txt") {
-    python -m pip install --upgrade pip
-    python -m pip install -r backend/requirements.txt
-} else {
-    Write-Warning "backend/requirements.txt not found — skipping pip install"
-}
+# --- Stage 2: core utils ---
+Log "Stage 2/5: core utils (numpy, pillow, scipy, pyyaml, tqdm)"
+& $VenvPip install --no-cache-dir --prefer-binary `
+    "numpy>=1.24,<2.5" "pillow>=10.0" "pyyaml>=6.0" "scipy>=1.11" "tqdm>=4.66"
+if ($LASTEXITCODE -ne 0) { Fail "Stage 2 failed — core utils" }
 
-if (Test-Path "frontend") {
-    Write-Output "Installing frontend npm dependencies..."
+# --- Stage 3: web (flask) ---
+Log "Stage 3/5: flask + flask-cors"
+& $VenvPip install --no-cache-dir --prefer-binary `
+    "flask>=3.0,<4.0" "flask-cors>=4.0"
+if ($LASTEXITCODE -ne 0) { Fail "Stage 3 failed — flask" }
+
+# --- Stage 4: torch CPU (~200MB — be patient) ---
+Log "Stage 4/5: torch CPU wheels (~200MB download — be patient)"
+& $VenvPip install --no-cache-dir --prefer-binary `
+    --extra-index-url https://download.pytorch.org/whl/cpu `
+    "torch>=2.1,<2.6" "torchvision>=0.16,<0.21"
+if ($LASTEXITCODE -ne 0) { Fail "Stage 4 failed — torch. Re-run script to resume." }
+
+# Sanity: confirm CPU not CUDA
+$cudaVer = & $VenvPy -c "import torch; print(torch.version.cuda)" 2>&1
+if ($cudaVer -ne 'None') { Fail "torch installed with CUDA ($cudaVer) — should be CPU. Delete backend\.venv and retry." }
+
+# --- Stage 5: SAM family + augmentation + timm ---
+Log "Stage 5/5: segment-anything, mobile-sam, albumentations, timm"
+& $VenvPip install --no-cache-dir --prefer-binary `
+    "segment-anything==1.0" "mobile-sam==1.0" `
+    "albumentations>=1.4,<2.0" "timm>=0.9"
+if ($LASTEXITCODE -ne 0) { Fail "Stage 5 failed — SAM/augmentation" }
+
+# --- Frontend (idempotent npm) ---
+Log "Frontend: npm install (idempotent)"
+$nodeModules = Join-Path $RepoRoot 'frontend\node_modules'
+if (-not (Test-Path $nodeModules) -or (Get-ChildItem $nodeModules -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
     Push-Location frontend
-    if (Command-Exists -cmd "npm") {
-        npm install
-    } else {
-        Write-Error "ERROR: npm not found. Install Node.js which includes npm."
-        Pop-Location
-        exit 1
-    }
+    npm install
+    if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "npm install failed" }
     Pop-Location
 } else {
-    Write-Warning "frontend/ directory not found — skipping npm install"
+    Log "  frontend\node_modules present — skipping (delete it to force reinstall)"
 }
 
-Write-Output "`n✓ Installation complete. Next steps:`n  - Run the dev server: bash scripts/run-dev.sh`
+# --- Final import sanity ---
+Log "Sanity: importing all critical modules"
+& $VenvPy -c "import flask, torch, torchvision, mobile_sam, segment_anything, albumentations, timm; print('all imports OK')"
+if ($LASTEXITCODE -ne 0) { Fail "Sanity import failed — see error above" }
+
+Log "DONE. Launch with: bash scripts/run-dev.sh (or run backend and frontend manually)"
