@@ -68,3 +68,23 @@ export interface AnalysisRecord {
   result: SegmentResult;
   annotations: Record<number, string>;
 }
+
+export interface SaveAnnotationPayload {
+  analysis_id: string;
+  image_name: string;
+  image_data_url: string;
+  timestamp: number;
+  annotations: Array<{
+    index: number;
+    bbox: [number, number, number, number];
+    class_name: string;
+  }>;
+}
+
+export interface SaveAnnotationResponse {
+  status: "ok" | "error";
+  analysis_id: string;
+  saved_count: number;
+  classes: string[];
+  error?: string;
+}
