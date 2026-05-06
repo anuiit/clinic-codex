@@ -1,8 +1,0 @@
-The repository's dependency and output policy is documented in the root README.md under the "What NOT to commit" section.
-The section explicitly covers:
-- node_modules/
-- dist/, build/
-- __pycache__/, *.pyc
-- .DS_Store
-- *.pt weights
-- .env files

@@ -1,6 +1,0 @@
-643dc6e chore: add .sisyphus planning and evidence artifacts
-85780f3 ci: add smoke check workflow for frontend build and backend import
-b8bfd9b feat: externalize API base URL via VITE_API_BASE_URL environment variable
-65c7fa6 docs: add root README and replace template READMEs with project-specific documentation
-a18e679 chore: add comprehensive .gitignore covering OS, Python, Node, and build artifacts
-9085089 repo: add initial project source — frontend, backend integration, and archive

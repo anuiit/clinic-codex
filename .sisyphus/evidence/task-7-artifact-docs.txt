@@ -1,6 +1,0 @@
-sam = sam_model_registry["vit_t"](checkpoint="~/.cache/mobile_sam/mobile_sam.pt")
-  - `codex_model/weights/prototypes.pt` — classification prototypes
-  - `codex_model/weights/projection.pt` — projection weights
-  - `prototypes/prototypes.pt` — prototype embeddings
-  - `mobile_sam.pt` — MobileSAM segmentation checkpoint. This file may need a separate download. The backend defaults to searching in `~/.cache/mobile_sam/mobile_sam.pt` if not found in the local directory.
-- **MobileSAM checkpoint** must be downloaded separately (~39MB): stored at `~/.cache/mobile_sam/mobile_sam.pt`

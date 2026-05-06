@@ -1,3 +1,0 @@
-Env var: VITE_API_BASE_URL
-Can override default in production or local by setting VITE_API_BASE_URL in .env or environment
-Example: VITE_API_BASE_URL=https://api.example.com npm run dev
