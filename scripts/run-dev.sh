@@ -17,6 +17,19 @@ PY="backend/.venv/bin/python"
 "$PY" -c "import flask, torch, mobile_sam" 2>/dev/null \
   || fail "venv incomplete. Run: bash scripts/install.sh"
 
+
+# --- Pre-flight: prototypes (auto-export if missing) ---
+PROTO_DERIVED="backend/codex_model/weights/prototypes.pt"
+PROTO_SOURCE="backend/prototypes/prototypes.pt"
+if [ ! -f "$PROTO_DERIVED" ]; then
+  [ -f "$PROTO_SOURCE" ] || fail "Model artefacts missing: $PROTO_SOURCE not found. See backend/README.md."
+  log "prototypes.pt missing — running export_model"
+  PY_ABS="$(cd "$(dirname "$PY")" && pwd)/$(basename "$PY")"
+  (cd backend && "$PY_ABS" -m codex_pipeline.scripts.export_model) \
+    || fail "export_model failed — see error above"
+  [ -f "$PROTO_DERIVED" ] || fail "export_model ran but $PROTO_DERIVED still missing"
+fi
+
 # --- Pre-flight: frontend deps ---
 [ -d frontend/node_modules ] || fail "frontend/node_modules missing. Run: bash scripts/install.sh"
 

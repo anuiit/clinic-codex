@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Clinic Codex Windows installer - staged, CPU-only.
+Clinic Codex installer - staged, CPU-only. Works on Windows and Linux/macOS via pwsh.
 Each stage is checkpointed. If interrupted, re-run is safe (idempotent).
 #>
 param()
@@ -20,21 +20,30 @@ function Fail([string]$msg) { Write-Host "[install] ERROR: $msg" -ForegroundColo
 # ---------------------------------------------------------------------------
 Log 'Stage 0/5: pre-flight checks'
 
+# Detect OS - venv layout differs: Windows uses Scripts\, Unix uses bin/
+$IsWin = $IsWindows -or ($PSVersionTable.PSEdition -eq 'Desktop')
+
 $Python = $null
-foreach ($candidate in @('py -3.11', 'py -3.10', 'python')) {
+$candidates = if ($IsWin) {
+    @('py -3.11', 'py -3.10', 'python3.11', 'python3.10', 'python')
+} else {
+    @('python3.11', 'python3.10', 'python3', 'python')
+}
+
+foreach ($candidate in $candidates) {
     $parts = $candidate -split ' '
     $cmd   = $parts[0]
     $args_ = if ($parts.Length -gt 1) { $parts[1..($parts.Length - 1)] } else { @() }
     try {
         $ver = & $cmd @args_ --version 2>&1
-        if ($ver -match 'Python (3\.(10|11))') {
+        if ("$ver" -match 'Python (3\.(10|11))') {
             $Python = @{ cmd = $cmd; args = $args_ }
             Log "Using $candidate ($ver)"
             break
         }
     } catch {}
 }
-if (-not $Python) { Fail "Need Python 3.10 or 3.11. Install from python.org and ensure the 'py' launcher is available." }
+if (-not $Python) { Fail "Need Python 3.10 or 3.11. Install from python.org (Windows) or via your package manager (Linux/macOS)." }
 
 $verCheck = & $Python.cmd @($Python.args) -c 'import sys; print(str(sys.version_info.major) + "." + str(sys.version_info.minor))' 2>&1
 if ($verCheck -notmatch '^3\.(10|11)$') { Fail "Python reports version $verCheck - need 3.10 or 3.11." }
@@ -46,19 +55,25 @@ if ($freeGB -lt 2) { Fail "Need >=2GB free disk. Have ${freeGB}GB." }
 # ---------------------------------------------------------------------------
 # Stage 1: venv
 # ---------------------------------------------------------------------------
-Log 'Stage 1/5: venv at backend\.venv'
+Log 'Stage 1/5: venv at backend/.venv'
 
-$VenvPy  = Join-Path $RepoRoot 'backend\.venv\Scripts\python.exe'
-$VenvPip = Join-Path $RepoRoot 'backend\.venv\Scripts\pip.exe'
+$VenvDir = Join-Path $RepoRoot 'backend' '.venv'
+if ($IsWin) {
+    $VenvPy  = Join-Path $VenvDir 'Scripts' 'python.exe'
+    $VenvPip = Join-Path $VenvDir 'Scripts' 'pip.exe'
+} else {
+    $VenvPy  = Join-Path $VenvDir 'bin' 'python'
+    $VenvPip = Join-Path $VenvDir 'bin' 'pip'
+}
 
 if (-not (Test-Path $VenvPy)) {
-    & $Python.cmd @($Python.args) -m venv 'backend\.venv'
+    & $Python.cmd @($Python.args) -m venv $VenvDir
     if ($LASTEXITCODE -ne 0) { Fail 'venv creation failed' }
 } else {
     Log '  reusing existing venv'
 }
 
-try { & $VenvPip install --quiet --upgrade pip 2>$null } catch { Log '  pip upgrade skipped' }
+try { & $VenvPip install --quiet --upgrade pip 2>&1 | Out-Null } catch { Log '  pip upgrade skipped' }
 
 # ---------------------------------------------------------------------------
 # Stage 2: core utils
@@ -100,7 +115,7 @@ $pkgsTorch = @(
 if ($LASTEXITCODE -ne 0) { Fail 'Stage 4 failed - torch. Re-run script to resume.' }
 
 $cudaVer = & $VenvPy -c 'import torch; print(torch.version.cuda)' 2>&1
-if ($cudaVer -ne 'None') { Fail "torch installed with CUDA ($cudaVer) - should be CPU. Delete backend\.venv and retry." }
+if ($cudaVer -ne 'None') { Fail "torch installed with CUDA ($cudaVer) - should be CPU. Delete backend/.venv and retry." }
 
 # ---------------------------------------------------------------------------
 # Stage 5: SAM family + augmentation + timm
@@ -121,7 +136,7 @@ if ($LASTEXITCODE -ne 0) { Fail 'Stage 5 failed - SAM/augmentation' }
 # ---------------------------------------------------------------------------
 Log 'Frontend: npm install (idempotent)'
 
-$nodeModules = Join-Path $RepoRoot 'frontend\node_modules'
+$nodeModules = Join-Path $RepoRoot 'frontend' 'node_modules'
 $isEmpty     = (-not (Test-Path $nodeModules)) -or ((Get-ChildItem $nodeModules -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0)
 
 if ($isEmpty) {
@@ -130,7 +145,7 @@ if ($isEmpty) {
     if ($LASTEXITCODE -ne 0) { Pop-Location; Fail 'npm install failed' }
     Pop-Location
 } else {
-    Log '  frontend\node_modules present - skipping (delete it to force reinstall)'
+    Log '  frontend/node_modules present - skipping (delete it to force reinstall)'
 }
 
 # ---------------------------------------------------------------------------
@@ -141,4 +156,25 @@ Log 'Sanity: importing all critical modules'
 & $VenvPy -c 'import flask, torch, torchvision, mobile_sam, segment_anything, albumentations, timm; print("all imports OK")'
 if ($LASTEXITCODE -ne 0) { Fail 'Sanity import failed - see error above' }
 
-Log 'DONE. Launch with: scripts\run-dev.ps1 (or start backend and frontend manually)'
+# ---------------------------------------------------------------------------
+# Final: Export model prototypes (idempotent)
+# ---------------------------------------------------------------------------
+Log 'Exporting model prototypes (idempotent)'
+
+$ProtoDerived = Join-Path $RepoRoot 'backend' 'codex_model' 'weights' 'prototypes.pt'
+$ProtoSource  = Join-Path $RepoRoot 'backend' 'prototypes' 'prototypes.pt'
+
+if (Test-Path $ProtoDerived) {
+    Log '  prototypes.pt present — skipping export'
+} elseif (-not (Test-Path $ProtoSource)) {
+    Fail "Model artefacts missing: $ProtoSource not found. See backend\README.md."
+} else {
+    Push-Location (Join-Path $RepoRoot 'backend')
+    & $VenvPy -m codex_pipeline.scripts.export_model
+    $exportExit = $LASTEXITCODE
+    Pop-Location
+    if ($exportExit -ne 0) { Fail 'export_model failed — see error above' }
+    if (-not (Test-Path $ProtoDerived)) { Fail "export_model ran but $ProtoDerived still missing" }
+}
+
+Log 'DONE. Run: bash scripts/run-dev.sh (Linux/macOS) or powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1 (Windows)'

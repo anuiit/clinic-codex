@@ -93,4 +93,20 @@ log "Sanity: importing all critical modules"
 "$PY" -c "import flask, torch, torchvision, mobile_sam, segment_anything, albumentations, timm; print('all imports OK')" \
   || fail "Sanity import failed — see error above"
 
-log "DONE. Launch with: bash scripts/run-dev.sh"
+
+# --- Final: Export model prototypes (idempotent) ---
+log "Exporting model prototypes (idempotent)"
+PROTO_DERIVED="backend/codex_model/weights/prototypes.pt"
+PROTO_SOURCE="backend/prototypes/prototypes.pt"
+if [ -f "$PROTO_DERIVED" ]; then
+  log "  prototypes.pt present — skipping export"
+elif [ ! -f "$PROTO_SOURCE" ]; then
+  fail "Model artefacts missing: $PROTO_SOURCE not found. See backend/README.md."
+else
+  PY_ABS="$(cd "$(dirname "$PY")" && pwd)/$(basename "$PY")"
+  (cd backend && "$PY_ABS" -m codex_pipeline.scripts.export_model) \
+    || fail "export_model failed — see error above"
+  [ -f "$PROTO_DERIVED" ] || fail "export_model ran but $PROTO_DERIVED still missing"
+fi
+
+log "DONE. Launch with: bash scripts/run-dev.sh (Linux/macOS) or powershell -ExecutionPolicy Bypass -File .\\scripts\\run-dev.ps1 (Windows)"
