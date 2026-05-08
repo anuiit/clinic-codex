@@ -65,6 +65,8 @@ build/
 .env.local
 .env.*.local
 *.pt
+# Exception: source prototype artefact must ship with the repo so install.sh can export it
+!backend/prototypes/prototypes.pt
 .sisyphus/evidence/
 
 # Preserve canonical source roots
