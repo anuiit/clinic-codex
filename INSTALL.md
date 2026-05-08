@@ -66,8 +66,15 @@ Whenever you want to use Clinic Codex, follow these steps:
 1. Open your Terminal (Mac/Linux) or PowerShell (Windows).
 2. Navigate to your project folder using the `cd` command.
 3. Start the tool by running:
+
+   **On Mac/Linux**:
    ```bash
    bash scripts/run-dev.sh
+   ```
+
+   **On Windows** (in PowerShell):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1
    ```
 4. Wait for the message saying the servers have started.
 5. Open your web browser (like Chrome or Firefox) and go to:
@@ -91,6 +98,8 @@ To stop the tool, go back to your Terminal or PowerShell window and press **Ctrl
 - **Analysis fails or never finishes**: 
    - Check that your `frontend/.env` file contains the correct line mentioned in Step 3.
    - Make sure you are using Python 3.10 or 3.11.
+- **Backend won't start, error mentions `prototypes.pt`**:
+  The model weights need to be exported once before first use. The launcher script (`scripts/run-dev.sh` or `scripts/run-dev.ps1`) does this automatically. If it fails, the source artefact `backend/prototypes/prototypes.pt` may be missing — re-download the project ZIP from GitHub.
 - **Optional - Pre-downloading AI models**: If you have a slow internet connection and want to download the AI models before starting, Mac/Linux users can run:
   ```bash
   bash scripts/download-weights.sh
