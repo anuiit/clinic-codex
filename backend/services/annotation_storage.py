@@ -1,6 +1,8 @@
+"""Single source of truth: backend/annotations/<analysis_id>/. No writes to training_data/."""
 from __future__ import annotations
 
 import base64
+import errno
 import io
 import json
 import os
@@ -10,6 +12,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image
+
+
+class AnnotationStorageError(Exception):
+    """Base class for annotation storage errors."""
+
+
+class AnnotationPermissionError(AnnotationStorageError, PermissionError):
+    """Raised when the annotations directory is not writable."""
+
+
+class AnnotationDiskFullError(AnnotationStorageError, OSError):
+    """Raised when the disk has no space left."""
 
 
 def sanitize_class_name(name: str) -> str:
@@ -70,7 +84,7 @@ def save_annotation(
     image: Image.Image,
     annotations: list[dict],
     base_dir: Path,
-    elements_dir: Path,
+    elements_dir: Path,  # kept for backward compat — not used
 ) -> dict:
     if not _SAFE_ID.match(analysis_id):
         raise ValueError(
@@ -78,69 +92,65 @@ def save_annotation(
         )
 
     target_dir = base_dir / analysis_id
+    tmp_dir = base_dir / f".tmp-{analysis_id}-{os.getpid()}"
 
-    if target_dir.exists():
-        target_abs = target_dir.resolve()
-        for symlink in elements_dir.rglob("*"):
-            if symlink.is_symlink():
-                try:
-                    link_target = Path(os.readlink(symlink))
-                    if not link_target.is_absolute():
-                        link_target = (symlink.parent / link_target).resolve()
-                    if str(link_target).startswith(str(target_abs)):
-                        symlink.unlink()
-                except OSError:
-                    pass
-        shutil.rmtree(target_dir)
+    try:
+        (tmp_dir / "elements").mkdir(parents=True)
 
-    (target_dir / "elements").mkdir(parents=True)
+        img_w, img_h = image.size
+        image.save(tmp_dir / "image.png", format="PNG")
 
-    img_w, img_h = image.size
-    image.save(target_dir / "image.png", format="PNG")
+        saved_annotations = []
+        classes_seen: set[str] = set()
 
-    saved_annotations = []
-    classes_seen: set[str] = set()
+        for ann in annotations:
+            idx = ann["index"]
+            raw_class = ann["class_name"]
+            bbox_raw = ann["bbox"]
 
-    for ann in annotations:
-        idx = ann["index"]
-        raw_class = ann["class_name"]
-        bbox_raw = ann["bbox"]
+            cls = sanitize_class_name(raw_class)
+            x, y, w, h = clamp_bbox(tuple(bbox_raw), img_w, img_h)
+            crop = image.crop((x, y, x + w, y + h))
+            crop_filename = f"{idx}.png"
+            crop.save(tmp_dir / "elements" / crop_filename, format="PNG")
 
-        cls = sanitize_class_name(raw_class)
-        x, y, w, h = clamp_bbox(tuple(bbox_raw), img_w, img_h)
-        crop = image.crop((x, y, x + w, y + h))
-        crop_filename = f"{idx}.png"
-        crop.save(target_dir / "elements" / crop_filename, format="PNG")
+            classes_seen.add(cls)
+            saved_annotations.append(
+                {
+                    "index": idx,
+                    "class_name": cls,
+                    "bbox": [x, y, w, h],
+                    "crop_path": str(target_dir / "elements" / crop_filename),
+                }
+            )
 
-        sym_dir = elements_dir / cls
-        sym_dir.mkdir(parents=True, exist_ok=True)
-        sym_path = sym_dir / f"{analysis_id}_el{idx}.png"
-        sym_target_abs = target_dir / "elements" / crop_filename
-        rel_target = os.path.relpath(sym_target_abs, sym_path.parent)
-        if sym_path.exists() or sym_path.is_symlink():
-            sym_path.unlink()
-        sym_path.symlink_to(rel_target)
+        metadata = {
+            "analysis_id": analysis_id,
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "annotations": saved_annotations,
+        }
+        (tmp_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
 
-        classes_seen.add(cls)
-        saved_annotations.append(
-            {
-                "index": idx,
-                "class_name": cls,
-                "bbox": [x, y, w, h],
-                "crop_path": str(target_dir / "elements" / crop_filename),
-            }
-        )
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        shutil.move(str(tmp_dir), str(target_dir))
 
-    metadata = {
-        "analysis_id": analysis_id,
-        "uploaded_at": datetime.now(timezone.utc).isoformat(),
-        "annotations": saved_annotations,
-    }
-    (target_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
+    except PermissionError as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise AnnotationPermissionError(str(e)) from e
+    except OSError as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if e.errno == errno.ENOSPC:
+            raise AnnotationDiskFullError(str(e)) from e
+        raise
+    except:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
     return {
         "status": "ok",
         "analysis_id": analysis_id,
         "saved_count": len(saved_annotations),
         "classes": sorted(classes_seen),
+        "saved_at": datetime.now(timezone.utc).isoformat(),
     }
