@@ -35,10 +35,17 @@ With the Flask backend running (`bash scripts/run-dev.sh`):
 2. Click **"Envoyer pour entraînement"** in the top toolbar.
 3. A green toast confirms: `Envoyé : N éléments dans K classes`.
 
-This calls `POST /save-annotation` on the backend, which:
-- Decodes each element's crop from the image data URL.
-- Saves crops to `backend/annotations/<analysis_id>/elements/`.
-- Creates symlinks in `backend/training_data/Elements/<class_name>/`.
+### Stockage des annotations
+
+Les annotations sont sauvegardées directement dans le dossier du backend comme source unique de vérité.
+
+- **Emplacement** : `backend/annotations/<analysis_id>/`
+- **Fichiers créés** :
+  - `image.png` : L'image originale de l'analyse.
+  - `elements/el_<idx>.png` : Chaque recadrage d'élément annoté.
+  - `metadata.json` : Contient les boîtes englobantes, les étiquettes et les horodatages.
+
+Contrairement aux versions précédentes, le backend n'écrit plus directement dans `training_data/` et n'utilise plus de liens symboliques (symlinks).
 
 ### Option B: Standalone export
 
@@ -52,13 +59,28 @@ backend/.venv/bin/python3 scripts/export_annotations.py --analysis-id <id>
 backend/.venv/bin/python3 scripts/export_annotations.py --all --input analyses.json
 ```
 
-The script reads from `localStorage` export files and writes the same layout as Option A.
+---
+
+## Step 3 — Migration et Nettoyage
+
+Si vous effectuez une mise à jour depuis une version plus ancienne utilisant des liens symboliques, vous devez nettoyer votre environnement :
+
+1. **Vérifier les liens orphelins** :
+   ```bash
+   python scripts/migrate_annotation_symlinks.py --dry-run
+   ```
+2. **Appliquer le nettoyage** :
+   ```bash
+   python scripts/migrate_annotation_symlinks.py --apply
+   ```
+
+Cette étape supprime les anciens liens symboliques dans `training_data/Elements/` qui pointaient vers des fichiers déplacés ou supprimés.
 
 ---
 
-## Step 3 — Retrain
+## Step 4 — Retrain
 
-Once crops are on disk under `backend/training_data/Elements/`:
+Once crops are on disk under `backend/annotations/`:
 
 ```bash
 bash scripts/retrain.sh
@@ -68,7 +90,7 @@ This runs the four pipeline steps in order:
 
 | Step | Script | What it does |
 |------|--------|--------------|
-| 1/4 | `build_metadata.py` | Scans `training_data/` and writes `metadata.json` |
+| 1/4 | `build_metadata.py` | Scans `annotations/` and writes `metadata.json` |
 | 2/4 | `precompute_embeddings.py` | Extracts DINOv2 embeddings for all crops |
 | 3/4 | `train.py` | Trains prototype classifiers |
 | 4/4 | `export_model.py` | Writes `codex_model/weights/{prototypes.pt,projection.pt}` |
