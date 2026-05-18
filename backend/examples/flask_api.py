@@ -21,6 +21,7 @@ import math
 import os
 import sys
 import traceback
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +31,7 @@ from PIL import Image
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
 
-from services.annotation_storage import save_annotation, decode_image_data_url
+from services.annotation_storage import save_annotation, decode_image_data_url, AnnotationPermissionError, AnnotationDiskFullError, AnnotationStorageError
 
 from codex_model import CodexClassifier
 from codex_pipeline.segmentation import MobileSAMSegmenter
@@ -389,9 +390,36 @@ def save_annotation_route():
         return jsonify(result), 200
     except ValueError as e:
         return jsonify({"status": "error", "error": str(e)}), 400
+    except AnnotationPermissionError:
+        return jsonify({
+            "status": "error",
+            "error_code": "PERMISSION_DENIED",
+            "message": "Droits insuffisants sur le dossier annotations",
+            "hint": "Vérifiez les permissions du dossier backend/annotations/ ou lancez l'application avec un compte ayant accès en écriture."
+        }), 409
+    except AnnotationDiskFullError:
+        return jsonify({
+            "status": "error",
+            "error_code": "DISK_FULL",
+            "message": "Espace disque insuffisant",
+            "hint": "Libérez de l'espace puis réessayez."
+        }), 507
+    except AnnotationStorageError as e:
+        return jsonify({
+            "status": "error",
+            "error_code": "STORAGE_ERROR",
+            "message": str(e),
+            "hint": None
+        }), 500
     except Exception:
+        trace_id = uuid.uuid4().hex[:8]
         traceback.print_exc()
-        return jsonify({"status": "error", "error": "internal error"}), 500
+        return jsonify({
+            "status": "error",
+            "error_code": "INTERNAL",
+            "message": f"Erreur interne du serveur (id={trace_id})",
+            "hint": "Contactez le support avec cet identifiant."
+        }), 500
 
 
 if __name__ == "__main__":
