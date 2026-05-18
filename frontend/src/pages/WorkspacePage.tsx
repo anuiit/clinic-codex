@@ -65,7 +65,6 @@ export default function WorkspacePage() {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [historyOpen, setHistoryOpen] = useState(() => !resolveCurrentRecord(getHistory(), initialPreferredId));
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('all');
   const [trustData, setTrustData] = useState<TrustResult | null>(null);
@@ -82,14 +81,11 @@ export default function WorkspacePage() {
     cropCanvasRefs.current = [];
     setHoveredIdx(null);
     setFocusedIdx(null);
-    if (zoom !== 1) {
+  if (zoom !== 1) {
       setZoom(1);
     }
-    if (panOffset.x !== 0 || panOffset.y !== 0) {
-      setPanOffset({ x: 0, y: 0 });
-    }
     setOverlayMode('all');
-  }, [panOffset.x, panOffset.y, zoom]);
+  }, [zoom]);
 
   const selectRecord = useCallback((record: AnalysisRecord | null) => {
     resetInspectionState();
@@ -659,7 +655,7 @@ export default function WorkspacePage() {
                       <button type="button" onClick={() => setZoom(z => Math.min(4, z + 0.25))} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title={t.zoomIn}>
                         <ZoomIn size={16} />
                       </button>
-                      <button type="button" onClick={() => { setZoom(1); setPanOffset({x:0, y:0}); }} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title={t.fitToView}>
+                      <button type="button" onClick={() => { setZoom(1); }} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title={t.fitToView}>
                         <Maximize2 size={16} />
                       </button>
                       <button type="button" onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="rounded-lg p-2 text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100" title={t.zoomOut}>

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { SegmentResult, ClassifyResult, ClassesResult, SimilarResult, TrustResult, SaveAnnotationPayload, SaveAnnotationResponse } from '../types';
+import type { SegmentResult, ClassifyResult, ClassesResult, SimilarResult, TrustResult, SaveAnnotationPayload, SaveAnnotationResponse, SaveAnnotationResult } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:7117';
 
@@ -46,15 +46,38 @@ export async function getTrust(imageDataUrl: string, bbox: [number, number, numb
 
 export async function saveAnnotation(
   payload: SaveAnnotationPayload
-): Promise<SaveAnnotationResponse> {
-  const res = await fetch(`${BASE_URL}/save-annotation`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`save-annotation failed: ${res.status} ${errText}`);
+): Promise<SaveAnnotationResult> {
+  try {
+    const res = await fetch(`${BASE_URL}/save-annotation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null) as Partial<{
+        error_code: string;
+        message: string;
+        hint?: string;
+        trace_id?: string;
+      }> | null;
+
+      return {
+        ok: false,
+        error_code: errorData?.error_code ?? 'NETWORK_ERROR',
+        message: errorData?.message ?? `save-annotation failed: ${res.status}`,
+        hint: errorData?.hint,
+        trace_id: errorData?.trace_id,
+      };
+    }
+
+    const data = await res.json() as SaveAnnotationResponse;
+    return { ok: true, ...data };
+  } catch {
+    return {
+      ok: false,
+      error_code: 'NETWORK_ERROR',
+      message: 'Network error while saving annotation',
+    };
   }
-  return res.json();
 }

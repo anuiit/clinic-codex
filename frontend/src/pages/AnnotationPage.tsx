@@ -3,8 +3,10 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Save, Loader2, ZoomIn, ZoomOut, Maximize2, PenTool, MousePointer2, Trash2, Upload } from 'lucide-react';
 import { getAnalysisById, updateElements } from '../services/storage';
 import { getClasses, saveAnnotation } from '../services/api';
+import { t as translate } from '../i18n/annotation.fr';
 import { appText } from '../i18n/text';
-import type { AnalysisRecord, DetectedElement } from '../types';
+import type { AnalysisRecord, DetectedElement, SaveAnnotationResult } from '../types';
+import { clientToImage } from '../utils/imageCoords';
 
 type DragState = {
   type: 'draw' | 'move' | 'resize';
@@ -38,6 +40,8 @@ export default function AnnotationPage() {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
   const [dragState, setDragState] = useState<DragState>(null);
   const [tempBbox, setTempBbox] = useState<[number, number, number, number] | null>(null);
   
@@ -45,17 +49,9 @@ export default function AnnotationPage() {
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number | null>(null);
   const pendingTempBboxRef = useRef<[number, number, number, number] | null>(null);
+  const panStartRef = useRef<{ clientX: number; clientY: number; offset: { x: number; y: number } } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const t = appText.annotation;
-
-  const getSvgCoordinates = (e: ReactPointerEvent<SVGSVGElement>) => {
-    const pt = e.currentTarget.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const ctm = e.currentTarget.getScreenCTM();
-    if (!ctm) return null;
-    const svgPt = pt.matrixTransform(ctm.inverse());
-    return { x: svgPt.x, y: svgPt.y };
-  };
 
   const scheduleTempBbox = (bbox: [number, number, number, number]) => {
     pendingTempBboxRef.current = bbox;
@@ -121,6 +117,58 @@ export default function AnnotationPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (zoom <= 1) {
+      setPanOffset({ x: 0, y: 0 });
+      setIsPanning(false);
+      panStartRef.current = null;
+    }
+  }, [zoom]);
+
+  const clampPan = (offset: { x: number; y: number }, zoomLevel = zoom): { x: number; y: number } => {
+    if (!containerRef.current || !record || zoomLevel <= 1) {
+      return { x: 0, y: 0 };
+    }
+
+    const cRect = containerRef.current.getBoundingClientRect();
+    const [imgW, imgH] = record.result.image_size;
+    const scaledW = imgW * zoomLevel;
+    const scaledH = imgH * zoomLevel;
+    const maxPanX = (scaledW / 2) + (cRect.width / 2) - scaledW * 0.2;
+    const maxPanY = (scaledH / 2) + (cRect.height / 2) - scaledH * 0.2;
+
+    return {
+      x: Math.max(-maxPanX, Math.min(maxPanX, offset.x)),
+      y: Math.max(-maxPanY, Math.min(maxPanY, offset.y)),
+    };
+  };
+
+  const applyZoom = (nextZoom: number, anchor?: { clientX: number; clientY: number }) => {
+    const clampedZoom = Math.max(0.25, Math.min(4, nextZoom));
+
+    if (!anchor || !containerRef.current || zoom === 0) {
+      setZoom(clampedZoom);
+      setPanOffset((prev) => clampPan(prev, clampedZoom));
+      return;
+    }
+
+    const cRect = containerRef.current.getBoundingClientRect();
+    const centerX = cRect.left + cRect.width / 2;
+    const centerY = cRect.top + cRect.height / 2;
+    const cursorRelX = anchor.clientX - centerX;
+    const cursorRelY = anchor.clientY - centerY;
+    const zoomRatio = clampedZoom / zoom;
+
+    setZoom(clampedZoom);
+    setPanOffset((prev) => {
+      const nextOffset = {
+        x: cursorRelX - (cursorRelX - prev.x) * zoomRatio,
+        y: cursorRelY - (cursorRelY - prev.y) * zoomRatio,
+      };
+      return clampPan(nextOffset, clampedZoom);
+    });
+  };
+
   const getHitHandle = (x: number, y: number, bbox: [number, number, number, number]) => {
     const [bx, by, bw, bh] = bbox;
     const hSize = 12; // slightly larger hit area
@@ -149,8 +197,8 @@ export default function AnnotationPage() {
 
   const handleSvgPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!record) return;
-    const coords = getSvgCoordinates(e);
-    if (!coords) return;
+    const [imgW, imgH] = record.result.image_size;
+    const coords = clientToImage(e.currentTarget, e.clientX, e.clientY, { width: imgW, height: imgH });
     const { x, y } = coords;
 
     if (drawMode) {
@@ -198,15 +246,33 @@ export default function AnnotationPage() {
       e.currentTarget.setPointerCapture(e.pointerId);
     } else {
       setFocusedIdx(null);
+      if (zoom > 1) {
+        setIsPanning(true);
+        panStartRef.current = { clientX: e.clientX, clientY: e.clientY, offset: { ...panOffset } };
+        e.currentTarget.style.cursor = 'grabbing';
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }
     }
   };
 
   const handleSvgPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!record) return;
-    const coords = getSvgCoordinates(e);
-    if (!coords) return;
+
+    if (isPanning && panStartRef.current) {
+      const dx = e.clientX - panStartRef.current.clientX;
+      const dy = e.clientY - panStartRef.current.clientY;
+      setPanOffset(clampPan({
+        x: panStartRef.current.offset.x + dx,
+        y: panStartRef.current.offset.y + dy,
+      }));
+      e.currentTarget.style.cursor = 'grabbing';
+      return;
+    }
+
+    const [imgW, imgH] = record.result.image_size;
+    const coords = clientToImage(e.currentTarget, e.clientX, e.clientY, { width: imgW, height: imgH });
     const { x, y } = coords;
-    const [origW, origH] = record.result.image_size;
+    const [origW, origH] = [imgW, imgH];
 
     if (dragState) {
       let nextBbox: [number, number, number, number] | null = null;
@@ -284,6 +350,8 @@ export default function AnnotationPage() {
       }
       if (cursor === 'default' && hitIdx !== null) {
         cursor = 'move';
+      } else if (cursor === 'default' && hitIdx === null && zoom > 1) {
+        cursor = 'grab';
       }
       svg.style.cursor = cursor;
     } else {
@@ -292,8 +360,17 @@ export default function AnnotationPage() {
   };
 
   const handleSvgPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
-    const coords = getSvgCoordinates(e);
-    if (!coords) return;
+    if (!record) return;
+
+    if (isPanning) {
+      setIsPanning(false);
+      panStartRef.current = null;
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      e.currentTarget.style.cursor = zoom > 1 ? 'grab' : 'default';
+      return;
+    }
 
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
@@ -349,9 +426,11 @@ export default function AnnotationPage() {
     setSaving(true);
     const ok = updateElements(id, elements);
     if (!ok) {
+      setToast({ msg: translate('save.networkError'), ok: false });
       setSaving(false);
       return;
     }
+    setToast({ msg: translate('save.localSuccess'), ok: true });
     setSaving(false);
     setTimeout(() => {
       navigate('/');
@@ -362,11 +441,6 @@ export default function AnnotationPage() {
     if (!record || !id) return;
     setSending(true);
     try {
-      // Build annotations map: index → class_name (only elements with explicit annotation)
-      const annotations: Record<number, string> = {};
-      elements.forEach((el, idx) => {
-        if (el.class_name) annotations[idx] = el.class_name;
-      });
       const payload = {
         analysis_id: id,
         image_name: record.imageName,
@@ -378,10 +452,32 @@ export default function AnnotationPage() {
           class_name: el.class_name,
         })),
       };
-      const response = await saveAnnotation(payload);
-      setToast({ msg: `Envoyé : ${response.saved_count} éléments dans ${response.classes.length} classes`, ok: true });
-    } catch (err) {
-      setToast({ msg: err instanceof Error ? err.message : 'Erreur inconnue', ok: false });
+      const result: SaveAnnotationResult = await saveAnnotation(payload);
+
+      if (result.ok) {
+        setToast({ msg: translate('save.remoteSuccess'), ok: true });
+      } else {
+        let msg = translate('save.networkError');
+
+        switch (result.error_code) {
+          case 'PERMISSION_DENIED':
+            msg = translate('save.permissionDenied');
+            break;
+          case 'DISK_FULL':
+            msg = translate('save.diskFull');
+            break;
+          case 'STORAGE_ERROR':
+            msg = translate('save.storageError', { message: result.message });
+            break;
+          case 'INTERNAL_ERROR':
+            msg = translate('save.internalError', { traceId: result.trace_id ?? '?' });
+            break;
+          default:
+            msg = translate('save.networkError');
+        }
+
+        setToast({ msg, ok: false });
+      }
     } finally {
       setSending(false);
       setTimeout(() => setToast(null), 4000);
@@ -427,13 +523,13 @@ export default function AnnotationPage() {
           </button>
           
           <div className="flex items-center gap-1 rounded-lg border border-stone-700 bg-stone-900 p-1">
-            <button onClick={() => setZoom(z => Math.min(4, z + 0.25))} className="p-1.5 text-stone-400 hover:text-stone-100 hover:bg-stone-800 rounded">
+            <button onClick={() => applyZoom(zoom + 0.25)} className="p-1.5 text-stone-400 hover:text-stone-100 hover:bg-stone-800 rounded">
               <ZoomIn size={16} />
             </button>
-            <button onClick={() => setZoom(1)} className="p-1.5 text-stone-400 hover:text-stone-100 hover:bg-stone-800 rounded">
+            <button onClick={() => { setZoom(1); setPanOffset({ x: 0, y: 0 }); }} className="p-1.5 text-stone-400 hover:text-stone-100 hover:bg-stone-800 rounded" title="Réinitialiser la vue">
               <Maximize2 size={16} />
             </button>
-            <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="p-1.5 text-stone-400 hover:text-stone-100 hover:bg-stone-800 rounded">
+            <button onClick={() => applyZoom(zoom - 0.25)} className="p-1.5 text-stone-400 hover:text-stone-100 hover:bg-stone-800 rounded">
               <ZoomOut size={16} />
             </button>
           </div>
@@ -460,13 +556,18 @@ export default function AnnotationPage() {
       </div>
 
       <div className="flex min-h-0 flex-1 gap-2">
-        <div className="flex-1 overflow-auto rounded-xl border border-stone-800 bg-stone-900/80 relative flex items-center justify-center" onWheel={(e) => {
+        <div ref={containerRef} className="flex-1 overflow-auto rounded-xl border border-stone-800 bg-stone-900/80 relative flex items-center justify-center" onWheel={(e) => {
           if (e.ctrlKey) {
             e.preventDefault();
-            setZoom(z => Math.max(0.25, Math.min(4, z - e.deltaY * 0.01)));
+            const svgEl = e.currentTarget.querySelector('svg');
+            if (!svgEl || !record) return;
+            const [imgW, imgH] = record.result.image_size;
+            const pointer = clientToImage(svgEl as SVGSVGElement, e.clientX, e.clientY, { width: imgW, height: imgH });
+            if (pointer.x < 0 || pointer.x > imgW || pointer.y < 0 || pointer.y > imgH) return;
+            applyZoom(zoom - e.deltaY * 0.01, { clientX: e.clientX, clientY: e.clientY });
           }
         }}>
-          <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: 'transform 0.1s ease', willChange: 'transform' }} className="relative inline-block max-w-full max-h-full">
+          <div style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`, transformOrigin: 'center center', transition: isPanning ? 'none' : 'transform 0.1s ease', willChange: 'transform' }} className="relative inline-block max-w-full max-h-full">
             <img
               ref={imageRef}
               src={record!.imageDataUrl}
@@ -477,6 +578,7 @@ export default function AnnotationPage() {
               <svg
                 className="absolute left-0 top-0 w-full h-full"
                 viewBox={`0 0 ${record.result.image_size[0]} ${record.result.image_size[1]}`}
+                preserveAspectRatio="xMidYMid meet"
                 style={{ width: '100%', height: '100%' }}
                 onPointerDown={handleSvgPointerDown}
                 onPointerMove={handleSvgPointerMove}

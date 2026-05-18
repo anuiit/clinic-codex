@@ -88,3 +88,15 @@ export interface SaveAnnotationResponse {
   classes: string[];
   error?: string;
 }
+
+export interface SaveAnnotationError {
+  ok: false;
+  error_code: string;
+  message: string;
+  hint?: string;
+  trace_id?: string;
+}
+
+export type SaveAnnotationSuccess = SaveAnnotationResponse & { ok: true };
+
+export type SaveAnnotationResult = SaveAnnotationSuccess | SaveAnnotationError;
