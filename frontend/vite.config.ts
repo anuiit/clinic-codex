@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 // Cast config to any to allow Vitest "test" option without typing errors
 export default defineConfig({
-  server: { port: 7118, strictPort: false },
+  server: { port: 7118, strictPort: false, host: '0.0.0.0' },
   plugins: [react(), tailwindcss()],
   test: {
     environment: 'jsdom',
