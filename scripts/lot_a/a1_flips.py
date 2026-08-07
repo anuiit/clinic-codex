@@ -15,12 +15,18 @@ because a strict-subset churn relationship (churn_T2 subset of churn_T1)
 can have low Jaccard yet P(churn_T1 | churn_T2) == 1.0 — see
 tests/test_a1_flips.py::test_strict_subset_churn_yields_un_phenomene.
 
-Structural note: the *net-gain* sets of T1 and T2 are disjoint by
-construction — a C1->R2 improvement requires C1 to be wrong (the
-pre-condition), while a B0->C1 improvement requires C1 to be right (the
-post-condition). This analysis therefore targets churn (instability)
-overlap, never gain overlap; the disjointness is asserted, not merely
-claimed.
+Structural note: the *improvement* sets of T1 and T2 (not the net-gain
+scalars) are disjoint by construction — a C1->R2 improvement requires C1
+to be wrong (the pre-condition), while a B0->C1 improvement requires C1
+to be right (the post-condition). This analysis therefore targets churn
+(instability) overlap, never improvement overlap; the disjointness is
+asserted, not merely claimed.
+
+Argos review round 1 (no blockers, fixes applied): the pre-registered
+verdict rule is never changed post-hoc. Instead, `verdict.sensitivity`
+reports what the *reciprocal* rule (P(churn_T2 | churn_T1) >= 0.5) would
+have concluded, side by side with the registered verdict, so directional
+sensitivity is visible without touching the registered statistic.
 
 Report scope: everything is computed per seed AND aggregated (min/mean/
 max) across the 3 seeds — the 1959 rows are never pooled as though they
@@ -37,6 +43,7 @@ import platform
 import subprocess
 import sys
 from collections import Counter, defaultdict
+from math import comb
 from pathlib import Path
 from typing import Any, Callable
 
@@ -54,7 +61,9 @@ DEFAULT_OUTPUT_MD = ROOT / "reports/lot-a-20260807/a1.md"
 
 DEFAULT_BOOTSTRAP_DRAWS = 2000
 VERDICT_THRESHOLD = 0.5
-VERDICT_MIN_SEEDS = 2
+# Minimum seeds required for the verdict is a parametric majority
+# (len(seeds) // 2 + 1), computed in compute_verdict() — not a hardcoded
+# constant, so the rule stays correct if the seed count ever changes.
 
 ARM_FIELDS = {"B0": "b0_topk", "C1": "c1_topk", "R2": "candidate_topk"}
 TRANSITION_ARMS = {
@@ -134,6 +143,19 @@ def _classify_sign_agreement(signs: list[int]) -> str:
     if best_count * 2 >= len(signs):
         return "2/3" if len(signs) == 3 else "majority"
     return "dispersed"
+
+
+def _sign_test_exact_p(successes: int, n: int) -> float:
+    """Two-sided exact sign test p-value under Binomial(n, 0.5):
+    2 * min(P(X >= successes), P(X <= successes)), capped at 1.0.
+    Descriptive/illustrative given the small n used here (n = number of
+    seeds) — no confidence interval is derived from it."""
+    if n == 0:
+        return 1.0
+    pmf = [comb(n, k) * (0.5**n) for k in range(n + 1)]
+    p_le = sum(pmf[: successes + 1])
+    p_ge = sum(pmf[successes:])
+    return min(1.0, 2 * min(p_le, p_ge))
 
 
 def correct(row: dict, arm_field: str) -> bool:
@@ -311,7 +333,7 @@ def compute_seed_report(
     gains_disjoint = not (t1["improvements"] & t2["improvements"])
     if not gains_disjoint:
         raise RuntimeError(
-            f"structural invariant violated for seed {seed}: T1 and T2 net-gain "
+            f"structural invariant violated for seed {seed}: T1 and T2 improvement "
             "sets are not disjoint (should be impossible by construction)"
         )
 
@@ -378,36 +400,124 @@ def compute_seed_report(
 # ---------------------------------------------------------------------------
 
 
+def _sensitivity_narrative(
+    seeds: list[int],
+    min_seeds: int,
+    met_count: int,
+    verdict: str,
+    reciprocal_met_count: int,
+    reciprocal_values: dict[int, float | None],
+    met_reciprocal: dict[int, bool],
+    reciprocal_would_be_un_phenomene: bool,
+) -> str:
+    total = len(seeds)
+    reciprocal_verdict_label = (
+        "un phenomene" if reciprocal_would_be_un_phenomene else "deux phenomenes distincts"
+    )
+    detail = ", ".join(
+        f"{seed}: {reciprocal_values[seed]:.3f}" for seed in seeds if met_reciprocal[seed]
+    )
+    detail_suffix = f" ({detail})" if detail else ""
+
+    primary_is_un_phenomene = verdict.startswith("un phenomene")
+    if reciprocal_would_be_un_phenomene and not primary_is_un_phenomene:
+        reading = (
+            "Lecture substantielle : recouvrement partiel asymetrique -- la majorite "
+            "du churn T1 est aussi churn T2, l'inverse non."
+        )
+    elif primary_is_un_phenomene and not reciprocal_would_be_un_phenomene:
+        reading = (
+            "Lecture substantielle : recouvrement partiel asymetrique -- la majorite "
+            "du churn T2 est aussi churn T1, l'inverse non."
+        )
+    elif primary_is_un_phenomene and reciprocal_would_be_un_phenomene:
+        reading = "Lecture substantielle : les deux regles (directe et reciproque) concordent."
+    else:
+        reading = (
+            "Lecture substantielle : les deux regles (directe et reciproque) restent "
+            "sous le seuil de majorite."
+        )
+
+    return (
+        f"Regle pre-enregistree P(churn_T1|churn_T2) >= {VERDICT_THRESHOLD} : "
+        f"{met_count}/{total} seeds => verdict \"{verdict}\". "
+        f"Sensibilite : sous la regle reciproque P(churn_T2|churn_T1) >= "
+        f"{VERDICT_THRESHOLD}, {reciprocal_met_count}/{total} seeds{detail_suffix} "
+        f"auraient donne \"{reciprocal_verdict_label}\". {reading}"
+    )
+
+
 def compute_verdict(seed_reports: dict[int, dict]) -> dict:
     seeds = sorted(seed_reports)
-    met_count = sum(
-        1
+    # Parametric majority, not a hardcoded constant: correct for any seed count.
+    min_seeds = len(seeds) // 2 + 1
+
+    met_primary = {
+        seed: seed_reports[seed]["churn_overlap"]["verdict_condition_met_t1_given_t2_ge_threshold"]
         for seed in seeds
-        if seed_reports[seed]["churn_overlap"]["verdict_condition_met_t1_given_t2_ge_threshold"]
-    )
+    }
+    met_count = sum(met_primary.values())
     verdict = (
         "un phenomene (instabilite partagee)"
-        if met_count >= VERDICT_MIN_SEEDS
+        if met_count >= min_seeds
         else "deux phenomenes distincts"
     )
+
+    # Sensitivity (argos review round 1): the registered rule above is never
+    # changed post-hoc. This reciprocal-rule readout is reported alongside
+    # it, purely descriptive, to make directional sensitivity transparent.
+    reciprocal_values = {
+        seed: seed_reports[seed]["churn_overlap"]["p_churn_t2_given_churn_t1"] for seed in seeds
+    }
+    met_reciprocal = {
+        seed: (value is not None and value >= VERDICT_THRESHOLD)
+        for seed, value in reciprocal_values.items()
+    }
+    reciprocal_met_count = sum(met_reciprocal.values())
+    reciprocal_would_be_un_phenomene = reciprocal_met_count >= min_seeds
+
+    sensitivity = {
+        "primary_rule": f"P(churn_T1|churn_T2) >= {VERDICT_THRESHOLD} pour >= {min_seeds}/{len(seeds)} seeds",
+        "primary_seeds_meeting_condition": met_count,
+        "primary_verdict": verdict,
+        "reciprocal_rule": f"P(churn_T2|churn_T1) >= {VERDICT_THRESHOLD} pour >= {min_seeds}/{len(seeds)} seeds",
+        "reciprocal_seeds_meeting_condition": reciprocal_met_count,
+        "reciprocal_seeds_meeting_condition_detail": {
+            str(seed): reciprocal_values[seed] for seed in seeds
+        },
+        "reciprocal_verdict_would_be": (
+            "un phenomene (instabilite partagee)"
+            if reciprocal_would_be_un_phenomene
+            else "deux phenomenes distincts"
+        ),
+        "narrative": _sensitivity_narrative(
+            seeds,
+            min_seeds,
+            met_count,
+            verdict,
+            reciprocal_met_count,
+            reciprocal_values,
+            met_reciprocal,
+            reciprocal_would_be_un_phenomene,
+        ),
+    }
+
     return {
         "rule": (
             "instabilite partagee / un phenomene si P(churn_T1 | churn_T2) >= "
-            f"{VERDICT_THRESHOLD} pour >= {VERDICT_MIN_SEEDS} des {len(seeds)} seeds ; "
+            f"{VERDICT_THRESHOLD} pour >= {min_seeds} des {len(seeds)} seeds (majorite) ; "
             "sinon deux phenomenes distincts. Jaccard n'est jamais la statistique "
-            "de verdict (aboli, cf. B6)."
+            "de verdict (aboli, cf. B6). Regle pre-enregistree, non modifiee apres "
+            "lecture des donnees (voir sensitivity pour la regle reciproque, "
+            "descriptive uniquement)."
         ),
         "threshold": VERDICT_THRESHOLD,
-        "min_seeds_required": VERDICT_MIN_SEEDS,
+        "min_seeds_required": min_seeds,
         "seeds_meeting_condition": met_count,
         "seeds_total": len(seeds),
-        "seeds_meeting_condition_detail": {
-            str(seed): seed_reports[seed]["churn_overlap"][
-                "verdict_condition_met_t1_given_t2_ge_threshold"
-            ]
-            for seed in seeds
-        },
+        "seeds_meeting_condition_detail": {str(seed): met_primary[seed] for seed in seeds},
         "verdict": verdict,
+        "sensitivity": sensitivity,
     }
 
 
@@ -475,6 +585,7 @@ def sign_consistency_report(seed_reports: dict[int, dict]) -> dict:
         alpha = 1 + successes
         beta = 1 + (len(seed_signs) - successes)
         posterior_mean = alpha / (alpha + beta)
+        sign_test_exact_p = _sign_test_exact_p(successes, len(seed_signs))
 
         folds = sorted(
             {
@@ -501,12 +612,17 @@ def sign_consistency_report(seed_reports: dict[int, dict]) -> dict:
                 "seeds_ordered": seeds,
                 "seed_signs": seed_signs,
                 "agreement_category": overall_category,
+                "sign_test_exact_p": sign_test_exact_p,
+                "sign_test_exact_p_label": (
+                    f"bilateral, Binomial({len(seed_signs)}, 0.5) -- descriptif, aucun "
+                    "intervalle de confiance calcule"
+                ),
                 "beta_1_1_posterior": {
                     "alpha": alpha,
                     "beta": beta,
                     "mean": posterior_mean,
                     "label": (
-                        "prior de reference uniforme, illustratif -- n=3, "
+                        f"prior de reference uniforme, illustratif -- n={len(seed_signs)}, "
                         "aucun intervalle de confiance calcule"
                     ),
                 },
@@ -579,11 +695,12 @@ def build_core_report(
             "T2": "C1 -> R2",
             "D": "B0 -> R2 (direct)",
         },
-        "structural_note_gain_sets_disjoint": (
-            "Les ensembles de gains nets de T1 et T2 sont disjoints par construction : "
-            "un gain B0->C1 exige C1 correct (post-condition), un gain C1->R2 exige C1 "
-            "incorrect (pre-condition). L'analyse porte donc sur le recouvrement du "
-            "churn (instabilite), jamais sur le recouvrement des gains."
+        "structural_note_improvement_sets_disjoint": (
+            "Les ensembles d'ameliorations (pas les gains nets, qui sont des scalaires) "
+            "de T1 et T2 sont disjoints par construction : une amelioration B0->C1 exige "
+            "C1 correct (post-condition), une amelioration C1->R2 exige C1 incorrect "
+            "(pre-condition). L'analyse porte donc sur le recouvrement du churn "
+            "(instabilite), jamais sur le recouvrement des ameliorations."
         ),
         "bootstrap_seed_base": bootstrap_seed_base,
         "bootstrap_draws": bootstrap_draws,
@@ -633,7 +750,7 @@ def render_markdown(report: dict) -> str:
     lines.append("")
     lines.append(report["verdict"]["rule"])
     lines.append("")
-    lines.append(report["structural_note_gain_sets_disjoint"])
+    lines.append(report["structural_note_improvement_sets_disjoint"])
     lines.append("")
 
     lines.append("## Hygiene des donnees")
@@ -665,18 +782,37 @@ def render_markdown(report: dict) -> str:
     verdict = report["verdict"]
     lines.append(
         f"- Seeds satisfaisant P(churn_T1 | churn_T2) >= {verdict['threshold']} : "
-        f"{verdict['seeds_meeting_condition']}/{verdict['seeds_total']}"
+        f"{verdict['seeds_meeting_condition']}/{verdict['seeds_total']} "
+        f"(majorite requise : {verdict['min_seeds_required']})"
     )
-    lines.append(f"- **Verdict : {verdict['verdict']}**")
+    lines.append(f"- **Verdict (regle pre-enregistree, non modifiee) : {verdict['verdict']}**")
+    lines.append("")
+    lines.append("### Sensibilite directionnelle (descriptif, ne modifie pas le verdict)")
+    lines.append("")
+    sensitivity = verdict["sensitivity"]
+    lines.append(sensitivity["narrative"])
+    lines.append("")
+    lines.append(
+        f"- Regle reciproque : {sensitivity['reciprocal_rule']} -> "
+        f"{sensitivity['reciprocal_seeds_meeting_condition']}/{verdict['seeds_total']} "
+        f"seeds, verdict qu'elle aurait donne : {sensitivity['reciprocal_verdict_would_be']}"
+    )
+    reciprocal_detail = sensitivity["reciprocal_seeds_meeting_condition_detail"]
+    reciprocal_detail_str = ", ".join(
+        f"{seed}: {value:.3f}" if value is not None else f"{seed}: n/a"
+        for seed, value in reciprocal_detail.items()
+    )
+    lines.append(f"- P(churn_T2 | churn_T1) par seed : {reciprocal_detail_str}")
     lines.append("")
 
     lines.append("## Resultats par seed")
     lines.append("")
     lines.append(
-        "| seed | net T1 | net T2 | net D | churn T1 | churn T2 | "
-        "P(T1\\|T2) | P(T2\\|T1) | Jaccard (secondaire) | IC95 P(T1\\|T2) bootstrap |"
+        "| seed | n lignes | net T1 | net T2 | net D | churn T1 | churn T2 | churn D | "
+        "P(T1\\|T2) | P(T2\\|T1) | Jaccard (secondaire) | IC95 descriptif P(T1\\|T2) | "
+        "identite net(D)=T1+T2 | ameliorations T1/T2 disjointes |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for seed_key, seed_report in report["per_seed"].items():
         t1 = seed_report["transitions"]["T1_B0_to_C1"]
         t2 = seed_report["transitions"]["T2_C1_to_R2"]
@@ -693,17 +829,31 @@ def render_markdown(report: dict) -> str:
             return f"{value:.3f}" if value is not None else "n/a"
 
         lines.append(
-            f"| {seed_key} | {t1['net']} | {t2['net']} | {d['net']} | "
-            f"{overlap['churn_t1_size']} | {overlap['churn_t2_size']} | "
+            f"| {seed_key} | {seed_report['n_rows']} | {t1['net']} | {t2['net']} | {d['net']} | "
+            f"{overlap['churn_t1_size']} | {overlap['churn_t2_size']} | {d['churn_size']} | "
             f"{fmt(overlap['p_churn_t1_given_churn_t2'])} | "
             f"{fmt(overlap['p_churn_t2_given_churn_t1'])} | "
-            f"{fmt(overlap['jaccard_secondary'])} | {ci} |"
+            f"{fmt(overlap['jaccard_secondary'])} | {ci} | "
+            f"{seed_report['arithmetic_identity_net_d_eq_t1_plus_t2']} | "
+            f"{seed_report['gain_sets_disjoint_t1_t2']} |"
         )
     lines.append("")
+
+    component_counts = {
+        seed_report["cluster_bootstrap_descriptive"]["n_components_resampled_per_draw"]
+        for seed_report in report["per_seed"].values()
+    }
+    if len(component_counts) == 1:
+        component_count_str = str(next(iter(component_counts)))
+    elif component_counts:
+        component_count_str = f"{min(component_counts)}-{max(component_counts)} (variable selon seed)"
+    else:
+        component_count_str = "n/a"
+    n_seeds = len(report["per_seed"])
     lines.append(
-        "IC bootstrap = descriptif (25 composantes, "
+        f"IC bootstrap = descriptif ({component_count_str} composantes, "
         f"{report['bootstrap_draws']} tirages, percentile 95%) — n'est pas une "
-        "inference de reference sur ces trois seeds."
+        f"inference de reference sur ces {n_seeds} seeds."
     )
     lines.append("")
 
@@ -730,11 +880,16 @@ def render_markdown(report: dict) -> str:
             f"-> categorie {overall['agreement_category']}"
         )
         lines.append(
+            f"- Test des signes exact ({overall['sign_test_exact_p_label']}) : "
+            f"p = {overall['sign_test_exact_p']:.3f}"
+        )
+        lines.append(
             f"- Posterieur Beta(1,1) : alpha={posterior['alpha']}, beta={posterior['beta']}, "
             f"moyenne={posterior['mean']:.3f} ({posterior['label']})"
         )
+        n_folds = len(data["per_fold"])
         lines.append(
-            f"- Repartition par fold (5 folds) des categories d'accord : "
+            f"- Repartition par fold ({n_folds} folds) des categories d'accord : "
             f"{data['per_fold_agreement_category_counts']}"
         )
         lines.append("")
@@ -748,8 +903,8 @@ def render_markdown(report: dict) -> str:
         for transition_name, counts in transitions.items():
             imp = counts["improvements"]
             deg = counts["degradations"]
-            imp_str = f"{imp['min']}/{imp['mean']:.1f}/{imp['max']}" if imp else "n/a"
-            deg_str = f"{deg['min']}/{deg['mean']:.1f}/{deg['max']}" if deg else "n/a"
+            imp_str = f"{imp['min']:.1f}/{imp['mean']:.1f}/{imp['max']:.1f}" if imp else "n/a"
+            deg_str = f"{deg['min']:.1f}/{deg['mean']:.1f}/{deg['max']:.1f}" if deg else "n/a"
             lines.append(f"| {prefix} | {transition_name} | {imp_str} | {deg_str} |")
     lines.append("")
 

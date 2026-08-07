@@ -224,6 +224,52 @@ def test_two_phenomenes_when_conditional_below_threshold(tmp_path):
     assert report["verdict"]["verdict"] == "deux phenomenes distincts"
 
 
+def test_reverse_subset_churn_keeps_registered_verdict_but_exposes_reciprocal(tmp_path):
+    """Mirror of the strict-subset fixture with T1/T2 swapped: churn_T1 is a
+    strict subset of churn_T2 this time, so P(churn_T2 | churn_T1) == 1.0 but
+    the *registered* rule only ever looks at P(churn_T1 | churn_T2). Argos
+    review round 1: the registered verdict must NOT flip just because the
+    reciprocal direction is perfect -- it stays "deux phenomenes distincts",
+    and the reciprocal readout is exposed only in verdict.sensitivity as a
+    descriptive, non-binding cross-check."""
+    runtime_dir = _build_synthetic_runtime(tmp_path)
+    # churn_T1 = {r1, r2} is a strict subset of churn_T2 = {r1, r2, r3, r4, r5}.
+    # intersection = 2, |churn_T1| = 2, |churn_T2| = 5.
+    # P(churn_T1 | churn_T2) = 2/5 = 0.4 (< 0.5 -> registered rule not met)
+    # P(churn_T2 | churn_T1) = 2/2 = 1.0 (reciprocal rule, fully met)
+    specs = [
+        dict(row_id="r1", label=1, b0_topk=WRONG, c1_topk=CORRECT, candidate_topk=WRONG),
+        dict(row_id="r2", label=1, b0_topk=WRONG, c1_topk=CORRECT, candidate_topk=WRONG),
+        dict(row_id="r3", label=1, b0_topk=CORRECT, c1_topk=CORRECT, candidate_topk=WRONG),
+        dict(row_id="r4", label=1, b0_topk=CORRECT, c1_topk=CORRECT, candidate_topk=WRONG),
+        dict(row_id="r5", label=1, b0_topk=CORRECT, c1_topk=CORRECT, candidate_topk=WRONG),
+        dict(row_id="r6", label=1, b0_topk=CORRECT, c1_topk=CORRECT, candidate_topk=CORRECT),
+    ]
+    rows = _rows_for_all_seeds(specs)
+    report = _run(rows, runtime_dir)
+
+    seed_report = report["per_seed"]["17"]
+    overlap = seed_report["churn_overlap"]
+    assert overlap["churn_t1_size"] == 2
+    assert overlap["churn_t2_size"] == 5
+    assert overlap["intersection_size"] == 2
+    assert overlap["p_churn_t1_given_churn_t2"] == 2 / 5
+    assert overlap["p_churn_t2_given_churn_t1"] == 1.0
+
+    # Registered rule (never changed post-hoc): stays "deux phenomenes
+    # distincts" even though the reciprocal direction is a perfect 1.0.
+    assert report["verdict"]["verdict"] == "deux phenomenes distincts"
+    assert report["verdict"]["seeds_meeting_condition"] == 0
+
+    # The asymmetry is signaled explicitly, not silently dropped, via the
+    # descriptive sensitivity block.
+    sensitivity = report["verdict"]["sensitivity"]
+    assert sensitivity["reciprocal_seeds_meeting_condition"] == 3
+    assert sensitivity["reciprocal_verdict_would_be"] == "un phenomene (instabilite partagee)"
+    for seed in (17, 42, 73):
+        assert sensitivity["reciprocal_seeds_meeting_condition_detail"][str(seed)] == 1.0
+
+
 # ---------------------------------------------------------------------------
 # Arithmetic identity net(D) == net(T1) + net(T2)
 # ---------------------------------------------------------------------------
