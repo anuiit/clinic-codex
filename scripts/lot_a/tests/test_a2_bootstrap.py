@@ -66,9 +66,17 @@ def _rows_for_all_seeds(row_specs: list[dict]) -> list[dict]:
     return rows
 
 
-def _build_synthetic_runtime(tmp_path, hidden_dim: int = 4):
-    """Identity-projection runtime with 2 orthogonal prototypes, labels
-    0 and 1, so predict_topk(k=1) has a hand-verifiable ranking."""
+def _build_synthetic_runtime(tmp_path, hidden_dim: int = 4, class_labels: tuple[int, ...] = (0, 1)):
+    """Identity-projection runtime with len(class_labels) orthogonal-ish
+    prototypes, so predict_topk(k=1) has a hand-verifiable ranking.
+
+    class_labels defaults to (0, 1) — a POSITION-aligned (no-op-translation)
+    native label space, matching most fixtures in this file. Pass a
+    non-trivial, non-contiguous tuple (e.g. (10, 20, 30)) to exercise the
+    position -> native label translation in compute_deployed_predictions
+    (the exact coverage gap that let the real label-space bug through all
+    51 prior synthetic tests undetected — see
+    test_compute_deployed_predictions_translates_nontrivial_native_labels)."""
     runtime_dir = tmp_path / "runtime"
     weights_dir = runtime_dir / "weights"
     weights_dir.mkdir(parents=True)
@@ -86,11 +94,12 @@ def _build_synthetic_runtime(tmp_path, hidden_dim: int = 4):
     }
     torch.save(projection_state, weights_dir / "projection.pt")
 
-    prototypes = F.normalize(torch.eye(2, hidden_dim), p=2, dim=1)
+    n_classes = len(class_labels)
+    prototypes = F.normalize(torch.eye(n_classes, hidden_dim), p=2, dim=1)
     proto_data = {
         "prototypes": prototypes,
-        "class_names": {0: "p0", 1: "p1"},
-        "class_labels": torch.tensor([0, 1], dtype=torch.int64),
+        "class_names": {label: f"p{i}" for i, label in enumerate(class_labels)},
+        "class_labels": torch.tensor(list(class_labels), dtype=torch.int64),
         "embedding_dim": hidden_dim,
     }
     torch.save(proto_data, weights_dir / "prototypes.pt")
@@ -237,6 +246,74 @@ def test_compute_deployed_predictions_raises_on_missing_row(tmp_path):
     )
     with pytest.raises(common.LotASchemaError, match="not found in any v9 fold"):
         a2.compute_deployed_predictions(rows, caches_dir, runtime_dir)
+
+
+def test_compute_deployed_predictions_translates_nontrivial_native_labels(tmp_path):
+    """Regression test for the real bug (diagnosed 2026-08-07): the deployed
+    runtime's predict_topk() returns labels from prototypes.pt's native ID
+    space, which need NOT equal the research pipeline's position-index
+    label space. Every prior fixture in this file used class_labels=(0, 1)
+    — a position-aligned, no-op-translation space — so this exact coverage
+    gap let the bug through 51 previously-green tests. Uses a
+    non-contiguous, offset native space (10, 20, 30) that would fail every
+    row if compared without translation."""
+    runtime_dir = _build_synthetic_runtime(tmp_path, class_labels=(10, 20, 30))
+    caches_dir = tmp_path / "caches"
+    caches_dir.mkdir(parents=True)
+
+    big = 20.0
+    features = torch.tensor(
+        [
+            [big, -big, -big, -big],   # aligns with prototype row 0 -> native label 10
+            [-big, big, -big, -big],   # aligns with prototype row 1 -> native label 20
+            [-big, -big, big, -big],   # aligns with prototype row 2 -> native label 30
+        ]
+    )
+    _write_fold_cache(
+        caches_dir / "fold-01-views08.pt",
+        oof_row_ids=["external:r0", "external:r1", "external:r2"],
+        oof_labels=[0, 1, 2],
+        oof_components=["component:A", "component:A", "component:A"],
+        features=features,
+        folds=[1, 1, 1],
+    )
+
+    rows = _rows_for_all_seeds(
+        [
+            dict(
+                row_id="external:r0", label=0, b0_topk=CORRECT, c1_topk=CORRECT,
+                candidate_topk=CORRECT, outer_fold=1, provenance_component="component:A",
+            ),
+            dict(
+                row_id="external:r1", label=1, b0_topk=CORRECT, c1_topk=CORRECT,
+                candidate_topk=CORRECT, outer_fold=1, provenance_component="component:A",
+            ),
+            dict(
+                row_id="external:r2", label=2, b0_topk=CORRECT, c1_topk=CORRECT,
+                candidate_topk=CORRECT, outer_fold=1, provenance_component="component:A",
+            ),
+        ]
+    )
+
+    per_row, meta = a2.compute_deployed_predictions(rows, caches_dir, runtime_dir)
+
+    # Every row's feature is exactly aligned with its true class's
+    # prototype, so all 3 must score correct once the position -> native
+    # translation is applied.
+    assert per_row["external:r0"]["correct_deployed"] is True
+    assert per_row["external:r1"]["correct_deployed"] is True
+    assert per_row["external:r2"]["correct_deployed"] is True
+
+    # Negative control proving this exercises the real bug: the RAW native
+    # label predict_topk() returns is never equal to the research label —
+    # a comparison without translation (the original bug) would score 0/3
+    # here, exactly the failure mode observed on the real 653-row dataset.
+    runtime = common.DeployedRuntime(runtime_dir)
+    cache = common.load_fold_cache(caches_dir / "fold-01-views08.pt")
+    raw_topk = runtime.predict_topk(cache["oof"]["base_features"].to(torch.float32), k=1)
+    research_labels = [0, 1, 2]
+    naive_matches = sum(1 for i, row in enumerate(raw_topk) if row[0] == research_labels[i])
+    assert naive_matches == 0
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +734,54 @@ def test_write_blocked_report_writes_json_and_md(tmp_path):
     assert data["status"] == "blocked"
     assert "calibration failed" in data["reason"]
     assert "BLOQUE" in output_md.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Deployed-accuracy stratification (U1: does deployed generalize on
+# external: as well as legacy:, post label-space fix)
+# ---------------------------------------------------------------------------
+
+
+def test_stratify_deployed_accuracy_by_hand_computed():
+    paired = {
+        "e1": {"component": "component:A", "correct_deployed": True, "prefix": "external:"},
+        "e2": {"component": "component:A", "correct_deployed": True, "prefix": "external:"},
+        "e3": {"component": "component:B", "correct_deployed": False, "prefix": "external:"},
+        "l1": {"component": "component:C", "correct_deployed": True, "prefix": "legacy:"},
+        "l2": {"component": "component:C", "correct_deployed": False, "prefix": "legacy:"},
+    }
+    strat = a2.stratify_deployed_accuracy_by(paired, lambda rec: rec["prefix"])
+
+    assert strat["external:"]["n_rows"] == 3
+    assert strat["external:"]["n_components"] == 2
+    assert strat["external:"]["deployed_correct"] == 2
+    assert strat["external:"]["deployed_accuracy"] == pytest.approx(2 / 3)
+
+    assert strat["legacy:"]["n_rows"] == 2
+    assert strat["legacy:"]["n_components"] == 1
+    assert strat["legacy:"]["deployed_correct"] == 1
+    assert strat["legacy:"]["deployed_accuracy"] == pytest.approx(0.5)
+
+
+def test_flag_deployed_accuracy_prefix_gap_flags_large_difference():
+    strat = {
+        "external:": {"deployed_accuracy": 0.90},
+        "legacy:": {"deployed_accuracy": 0.10},
+    }
+    gate = {"half_width_95_analytical": 0.05}
+    flag = a2.flag_deployed_accuracy_prefix_gap(strat, gate)
+    assert flag["flagged"] is True
+    assert flag["pairwise"][0]["abs_diff_deployed_accuracy"] == pytest.approx(0.80)
+
+
+def test_flag_deployed_accuracy_prefix_gap_does_not_flag_small_difference():
+    strat = {
+        "external:": {"deployed_accuracy": 0.89},
+        "legacy:": {"deployed_accuracy": 0.90},
+    }
+    gate = {"half_width_95_analytical": 0.05}
+    flag = a2.flag_deployed_accuracy_prefix_gap(strat, gate)
+    assert flag["flagged"] is False
 
 
 # ---------------------------------------------------------------------------

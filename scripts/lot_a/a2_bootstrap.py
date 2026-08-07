@@ -84,16 +84,32 @@ PREPROCESSING_CAVEAT_TEXT = (
     "la config du runtime deploye), et non par une relecture directe des images brutes "
     "a travers le runtime deploye. L'equivalence deploye repose donc sur cette parite "
     "de pipeline plus la preuve du gate de calibration C1 (Phase 0, check 3 : "
-    "50/50 correspondances exactes top-1, 50/50 top-3 sur le pilote 50-lignes). "
-    "Important : ce gate de calibration valide que le checkpoint de RECHERCHE C1 "
-    "reproduit les c1_topk stockes — il ne valide PAS que les PROTOTYPES DEPLOYES "
-    "(prototypes.pt) sont bien calibres sur ces memes features en cache. La precision "
-    "deployee mesuree ici sur les 653 lignes OOF est faible (voir la section "
-    "'Verification de sanite'), et une verification independante sur le split TRAIN "
-    "(bien plus grand, mêmes fichiers de cache) montre une precision egalement faible "
-    "(quelques %), ce qui suggere un ecart plus large que le seul bruit de petit "
-    "echantillon (U2 du registre d'incertitudes) plutot qu'une anomalie isolee au "
-    "sous-ensemble OOF."
+    "50/50 correspondances exactes top-1, 50/50 top-3 sur le pilote 50-lignes)."
+)
+
+DEPLOYED_LABEL_SPACE_BUGFIX_NOTE = (
+    "Correctif applique (2026-08-07, avant la premiere publication de ce rapport) : "
+    "une premiere version de cette phase comparait directement le label natif retourne "
+    "par le runtime deploye (espace ID legacy non contigu de prototypes.pt, jusqu'a 301 "
+    "pour 286 classes) au label «recherche» de prediction_rows.jsonl (index de position "
+    "contigu 0..285 dans backend/codex_model/config.json['class_names']) — deux espaces "
+    "d'entiers distincts pour les memes classes, jamais traduits l'un vers l'autre. "
+    "Cela produisait une deployed_accuracy artificiellement nulle (0/653) alors que la "
+    "sortie textuelle (class_name) etait correcte dans la grande majorite des cas. Le "
+    "correctif traduit l'index de position vers l'espace natif via "
+    "DeployedRuntime._class_labels (deja charge, cout nul), verifie exact sur les 11 "
+    "classes du sous-ensemble OOF (acatl, ameyalli, ayatl, chimalli, malinalli, mecatl, "
+    "pantli, texcalli, tilmatli, tlacotl, tzacualli) et corrobore independamment par une "
+    "execution du pipeline deploye complet (backend/codex_model/classifier.py, "
+    "preprocessing + backbone DINOv2 charge localement sans reseau + projection + "
+    "prototypes) sur 20 images sources reelles : 80% (16/20) de correspondance exacte du "
+    "class_name predit, alors que la comparaison naive par label brut donnait 0/20 — la "
+    "meme signature que le bug diagnostique sur les 653 lignes en cache. Ce test complet "
+    "sert aussi de preuve independante de parite features/pipeline (item U2) : le "
+    "backbone DINOv2-S/14 est verifie identique par sha256 (pin local de v9 == cache "
+    "torch.hub utilise par classifier.py, aucun telechargement reseau), et l'accuracy "
+    "elevee obtenue avec un pipeline d'extraction de features entierement independant "
+    "des caches v9 confirme que les features en cache sont bien dans l'espace attendu."
 )
 
 U1_CAVEAT_TEXT = (
@@ -223,7 +239,29 @@ def compute_deployed_predictions(
 ) -> tuple[dict[str, dict], dict]:
     """Deployed top-1 outcome for every unique row_id, read from whichever
     v9 fold's OOF cache holds that row (each row_id lives in exactly one
-    fold — verified below, never assumed). Returns (per_row, meta)."""
+    fold — verified below, never assumed). Returns (per_row, meta).
+
+    Label-space translation (post-hoc fix, diagnosed 2026-08-07): the
+    research pipeline's "label" field (prediction_rows.jsonl, v9 caches'
+    class_label, per_class_coverage.json) is a POSITION index (0..285) into
+    the class list, position-for-position identical to
+    backend/codex_model/config.json's class_names list. The deployed
+    runtime's predict_topk() returns labels from a SEPARATE, non-contiguous
+    "native" ID space (prototypes.pt's class_labels tensor, legacy/DB-style
+    IDs up to 301 for 286 populated classes) — this is classifier.py's
+    documented contract (classifier.py:459 self._label_index = labels;
+    classify()/classify_batch() return self._label_index[class_idx], not
+    the position index). Comparing a native deployed label directly to a
+    research position label without translating is a silent apples-to-
+    oranges bug: it was caught because it drove deployed_accuracy to 0.0000
+    on the 653 OOF rows, verified wrong via an independent full real-image
+    pipeline run (80% top-1 by class_name on a 20-image sample) and via a
+    name-based rescore of the cached predictions (89.1%, 582/653).
+    runtime._class_labels is already loaded in that same position order
+    (classifier.py's own load-time validation enforces
+    sorted(class_labels) -> class_names == config["class_names"], the same
+    ordering the research label space uses), so it doubles as the exact
+    position -> native translation table at zero extra cost."""
     unique_meta: dict[str, dict] = {}
     for row in rows:
         row_id = row["row_id"]
@@ -244,6 +282,16 @@ def compute_deployed_predictions(
 
     runtime = common.DeployedRuntime(runtime_dir)
     runtime.assert_unchanged()  # before
+
+    research_to_deployed_native_label = runtime._class_labels  # position -> native ID
+
+    def _deployed_label_matches_research(deployed_native_label: int, research_label: int) -> bool:
+        if not (0 <= research_label < len(research_to_deployed_native_label)):
+            raise common.LotASchemaError(
+                f"research label {research_label} outside deployed class range "
+                f"[0, {len(research_to_deployed_native_label)})"
+            )
+        return deployed_native_label == research_to_deployed_native_label[research_label]
 
     per_row: dict[str, dict] = {}
     per_fold_coverage: dict[str, int] = {}
@@ -291,7 +339,9 @@ def compute_deployed_predictions(
                         f"row_id {row_id!r} appears in more than one fold's oof cache"
                     )
                 per_row[row_id] = {
-                    "correct_deployed": bool(top1_row[0] == meta["label"]),
+                    "correct_deployed": _deployed_label_matches_research(
+                        top1_row[0], meta["label"]
+                    ),
                     "component": meta["component"],
                     "fold": meta["fold"],
                     "class_name": meta["class_name"],
@@ -309,7 +359,9 @@ def compute_deployed_predictions(
             train_labels = train["class_label"]
             train_topk = runtime.predict_topk(train_features, k=1)
             train_sanity_correct += sum(
-                1 for i, row in enumerate(train_topk) if row[0] == train_labels[i]
+                1
+                for i, row in enumerate(train_topk)
+                if _deployed_label_matches_research(row[0], train_labels[i])
             )
             train_sanity_n += len(train_labels)
 
@@ -330,9 +382,10 @@ def compute_deployed_predictions(
         "train_split_sanity_check": {
             "label": (
                 "descriptif uniquement, hors design A2 primaire — precision deployee "
-                "sur le split TRAIN (bien plus grand, non independamment evaluable, "
-                "meme fichiers de cache que les 653 OOF) pour contextualiser un taux "
-                "OOF faible/nul : artefact de petit N ou motif plus large (U2) ?"
+                "(apres correction de l'espace de labels, voir "
+                "deployed_label_space_bugfix_note) sur le split TRAIN (bien plus grand, "
+                "non independamment evaluable, memes fichiers de cache que les 653 OOF), "
+                "pour contextualiser l'accuracy OOF a plus grande echelle"
             ),
             "n": train_sanity_n,
             "correct": train_sanity_correct,
@@ -764,6 +817,78 @@ def flag_material_prefix_difference(strat_prefix: dict, hw25_c1: float) -> dict:
     }
 
 
+def stratify_deployed_accuracy_by(
+    paired_records: dict[str, dict], key_fn: Callable[[dict], str]
+) -> dict[str, dict]:
+    """Deployed-runtime accuracy itself (not a delta vs. an arm), stratified
+    by the given key — this is the U1 question directly: does the deployed
+    runtime generalize on provenance-disjoint 'external:' rows as well as
+    on potentially provenance-adjacent 'legacy:' rows, or only on the
+    latter (leakage)?"""
+    groups: dict[str, list[str]] = defaultdict(list)
+    for row_id, rec in paired_records.items():
+        groups[key_fn(rec)].append(row_id)
+
+    result: dict[str, dict] = {}
+    for key in sorted(groups):
+        row_ids = groups[key]
+        components = sorted({paired_records[r]["component"] for r in row_ids})
+        correct = sum(1 for r in row_ids if paired_records[r]["correct_deployed"])
+        result[key] = {
+            "n_rows": len(row_ids),
+            "n_components": len(components),
+            "deployed_correct": correct,
+            "deployed_accuracy": correct / len(row_ids) if row_ids else None,
+        }
+    return result
+
+
+def flag_deployed_accuracy_prefix_gap(
+    strat_deployed_accuracy_prefix: dict, deployed_accuracy_mde_gate: dict
+) -> dict:
+    keys = sorted(strat_deployed_accuracy_prefix)
+    threshold = deployed_accuracy_mde_gate.get("half_width_95_analytical")
+    if len(keys) < 2:
+        return {
+            "flagged": False,
+            "reason": "moins de 2 prefixes presents",
+            "pairwise": [],
+            "threshold_half_width_95_analytical": threshold,
+        }
+    pairwise = []
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            a, b = keys[i], keys[j]
+            acc_a = strat_deployed_accuracy_prefix[a]["deployed_accuracy"]
+            acc_b = strat_deployed_accuracy_prefix[b]["deployed_accuracy"]
+            diff = abs(acc_a - acc_b) if acc_a is not None and acc_b is not None else None
+            exceeds = (
+                diff is not None
+                and threshold is not None
+                and not math.isnan(threshold)
+                and diff > threshold
+            )
+            pairwise.append(
+                {
+                    "prefix_a": a,
+                    "prefix_b": b,
+                    "abs_diff_deployed_accuracy": diff,
+                    "exceeds_threshold": exceeds,
+                }
+            )
+    flagged = any(p["exceeds_threshold"] for p in pairwise)
+    return {
+        "flagged": flagged,
+        "threshold_definition": (
+            "materiel (fuite potentielle U1) si |diff accuracy deployee entre 2 prefixes| "
+            "> demi-largeur 95% analytique du gate MDE applique a l'accuracy deployee "
+            "elle-meme (meme methodologie Woodruff/PSU-avec-remise que le gate delta)"
+        ),
+        "threshold_half_width_95_analytical": threshold,
+        "pairwise": pairwise,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Statistics assembly (pure function — no IO, directly testable)
 # ---------------------------------------------------------------------------
@@ -787,6 +912,7 @@ def build_statistical_report(
     per_component_values: dict[str, dict[str, list[float]]] = {
         arm: defaultdict(list) for arm in ARMS
     }
+    per_component_values_deployed: dict[str, list[float]] = defaultdict(list)
 
     for row_id in row_ids:
         rec = paired_records[row_id]
@@ -796,6 +922,9 @@ def build_statistical_report(
             value = rec[f"delta_{arm}"]
             comp_sum[arm][idx] += value
             per_component_values[arm][rec["component"]].append(value)
+        per_component_values_deployed[rec["component"]].append(
+            1.0 if rec["correct_deployed"] else 0.0
+        )
 
     n_total = int(comp_n.sum())
     observed = {arm: observed_stat(comp_sum[arm], comp_n) for arm in ARMS}
@@ -812,6 +941,9 @@ def build_statistical_report(
     mde_gate_pre_bootstrap = {
         arm: compute_component_stats(per_component_values[arm]) for arm in ARMS
     }
+    # Same gate methodology applied to deployed accuracy itself (not a
+    # delta) — used as the U1 material-difference threshold below.
+    deployed_accuracy_mde_gate = compute_component_stats(per_component_values_deployed)
 
     # --- cluster bootstrap (joint resample preserves arm correlation — B3) ---
     rng = np.random.default_rng(bootstrap_seed_base)
@@ -834,6 +966,18 @@ def build_statistical_report(
     strat_prefix = stratify_by(paired_records, lambda rec: rec["prefix"])
     prefix_flag = flag_material_prefix_difference(strat_prefix, hw25_c1)
 
+    # U1's real question (post-fix): does deployed accuracy itself hold up
+    # on provenance-disjoint 'external:' rows as well as on 'legacy:' rows?
+    deployed_accuracy_by_prefix = stratify_deployed_accuracy_by(
+        paired_records, lambda rec: rec["prefix"]
+    )
+    deployed_accuracy_by_fold = stratify_deployed_accuracy_by(
+        paired_records, lambda rec: str(rec["fold"])
+    )
+    deployed_accuracy_prefix_gap = flag_deployed_accuracy_prefix_gap(
+        deployed_accuracy_by_prefix, deployed_accuracy_mde_gate
+    )
+
     statistics: dict[str, Any] = {
         "definitions": {
             "unit": f"row_id ({n_total} uniques)",
@@ -855,6 +999,7 @@ def build_statistical_report(
         "arm_accuracy_avg_over_seeds": arm_accuracy_avg_over_seeds,
         "observed_delta": observed,
         "mde_gate_pre_bootstrap": mde_gate_pre_bootstrap,
+        "deployed_accuracy_mde_gate": deployed_accuracy_mde_gate,
         "bootstrap": {
             "bca_headline": bca,
             "percentile_annex": percentile,
@@ -871,6 +1016,9 @@ def build_statistical_report(
             "by_outer_fold": strat_fold,
             "by_row_id_prefix": strat_prefix,
             "prefix_material_difference_flag_u1": prefix_flag,
+            "deployed_accuracy_by_outer_fold": deployed_accuracy_by_fold,
+            "deployed_accuracy_by_row_id_prefix": deployed_accuracy_by_prefix,
+            "deployed_accuracy_prefix_gap_flag_u1": deployed_accuracy_prefix_gap,
         },
     }
 
@@ -927,6 +1075,7 @@ def build_core_report(
         },
         "deployed_runtime_sanity_check": deployed_meta["train_split_sanity_check"],
         "preprocessing_caveat": PREPROCESSING_CAVEAT_TEXT,
+        "deployed_label_space_bugfix_note": DEPLOYED_LABEL_SPACE_BUGFIX_NOTE,
         "u1_sensitivity_caveat": U1_CAVEAT_TEXT,
         "statistics": statistics,
     }
@@ -1012,6 +1161,27 @@ def render_markdown(report: dict) -> str:
     )
     lines.append("")
 
+    lines.append("## Renversement du narratif (apres correctif d'espace de labels)")
+    lines.append("")
+    lines.append(
+        f"- **Precision deployee (corrigee) : {_fmt(stats['deployed_accuracy'])}** "
+        f"({int(round(stats['deployed_accuracy'] * stats['n_unique_rows']))}/"
+        f"{stats['n_unique_rows']}) — vs bras de recherche : "
+        + ", ".join(f"{arm}={_fmt(stats['arm_accuracy_avg_over_seeds'][arm])}" for arm in ARMS)
+    )
+    lines.append(
+        "- Le runtime deploye est nettement DEVANT les 3 bras de recherche sur ce meme "
+        "ensemble de 653 lignes OOF, pas derriere : "
+        + ", ".join(
+            f"delta {arm} (bras - deploye) = {_fmt(stats['observed_delta'][arm])}" for arm in ARMS
+        )
+    )
+    lines.append(
+        "- Voir `deployed_label_space_bugfix_note` ci-dessous pour le detail du bug "
+        "corrige (comparaison inter-espaces de labels) et sa preuve."
+    )
+    lines.append("")
+
     lines.append("## Garde runtime deploye")
     lines.append("")
     guard = report["runtime_guard"]
@@ -1048,6 +1218,8 @@ def render_markdown(report: dict) -> str:
 
     lines.append("## Caveats")
     lines.append("")
+    lines.append(f"- **Correctif espace de labels (voir ci-dessus)** : {report['deployed_label_space_bugfix_note']}")
+    lines.append("")
     lines.append(f"- **Pretraitement** : {report['preprocessing_caveat']}")
     lines.append("")
     lines.append(f"- **U1 (provenance)** : {report['u1_sensitivity_caveat']}")
@@ -1071,6 +1243,12 @@ def render_markdown(report: dict) -> str:
             f"{_fmt(gate['se_analytical_cluster'])} | {_fmt(gate['half_width_95_analytical'])} | "
             f"{_fmt(gate['mde_80pct_analytical'])} |"
         )
+    dep_gate = stats["deployed_accuracy_mde_gate"]
+    lines.append(
+        f"| accuracy deployee (brute, pas un delta) | {_fmt(dep_gate['icc_clipped_0_1'])} | "
+        f"{_fmt(dep_gate['se_analytical_cluster'])} | {_fmt(dep_gate['half_width_95_analytical'])} | "
+        f"{_fmt(dep_gate['mde_80pct_analytical'])} |"
+    )
     lines.append("")
     lines.append(f"Methodologie ({PRIMARY_ARM}) : {stats['mde_gate_pre_bootstrap'][PRIMARY_ARM]['methodology']}")
     lines.append("")
@@ -1152,7 +1330,45 @@ def render_markdown(report: dict) -> str:
 
     lines.append("## Ventilations annexes")
     lines.append("")
-    lines.append("### Par outer_fold")
+    lines.append("### Accuracy DEPLOYEE (pas un delta) par outer_fold — U1")
+    lines.append("")
+    lines.append("| fold | n lignes | n composantes | correct deploye | accuracy deployee |")
+    lines.append("|---|---|---|---|---|")
+    for key, entry in stats["stratifications"]["deployed_accuracy_by_outer_fold"].items():
+        lines.append(
+            f"| {key} | {entry['n_rows']} | {entry['n_components']} | "
+            f"{entry['deployed_correct']} | {_fmt(entry['deployed_accuracy'])} |"
+        )
+    lines.append("")
+    lines.append(
+        "### Accuracy DEPLOYEE (pas un delta) par prefixe de row_id (external: vs "
+        "legacy:) — c'est LA question U1"
+    )
+    lines.append("")
+    lines.append(
+        "Si le runtime deploye score aussi haut sur `external:` (corpus externe, "
+        "provenance disjointe d'apres l'audit v8) que sur `legacy:`, c'est un signal de "
+        "generalisation reelle. S'il ne score haut que sur `legacy:`, c'est un signal de "
+        "fuite de provenance potentielle."
+    )
+    lines.append("")
+    lines.append("| prefixe | n lignes | n composantes | correct deploye | accuracy deployee |")
+    lines.append("|---|---|---|---|---|")
+    for key, entry in stats["stratifications"]["deployed_accuracy_by_row_id_prefix"].items():
+        lines.append(
+            f"| {key} | {entry['n_rows']} | {entry['n_components']} | "
+            f"{entry['deployed_correct']} | {_fmt(entry['deployed_accuracy'])} |"
+        )
+    lines.append("")
+    dep_flag = stats["stratifications"]["deployed_accuracy_prefix_gap_flag_u1"]
+    lines.append(
+        f"- Difference materielle d'accuracy DEPLOYEE entre prefixes (U1) : "
+        f"**{dep_flag['flagged']}** ({dep_flag.get('threshold_definition', '')}, "
+        f"seuil = {_fmt(dep_flag.get('threshold_half_width_95_analytical'))})"
+    )
+    lines.append("")
+
+    lines.append("### Delta (bras - deploye) par outer_fold")
     lines.append("")
     lines.append("| fold | n lignes | n composantes | delta b0 | delta c1 | delta r2 |")
     lines.append("|---|---|---|---|---|---|")
@@ -1162,7 +1378,7 @@ def render_markdown(report: dict) -> str:
             f"{_fmt(entry['mean_delta_b0'])} | {_fmt(entry['mean_delta_c1'])} | {_fmt(entry['mean_delta_r2'])} |"
         )
     lines.append("")
-    lines.append("### Par prefixe de row_id (external: vs legacy: — bras de sensibilite U1)")
+    lines.append("### Delta (bras - deploye) par prefixe de row_id (external: vs legacy: — bras de sensibilite U1)")
     lines.append("")
     lines.append("| prefixe | n lignes | n composantes | delta b0 | delta c1 | delta r2 |")
     lines.append("|---|---|---|---|---|---|")
@@ -1173,7 +1389,7 @@ def render_markdown(report: dict) -> str:
         )
     lines.append("")
     flag = stats["stratifications"]["prefix_material_difference_flag_u1"]
-    lines.append(f"- Difference materielle signalee (U1) : **{flag['flagged']}** ({flag.get('threshold_definition', '')})")
+    lines.append(f"- Difference materielle des deltas signalee (U1) : **{flag['flagged']}** ({flag.get('threshold_definition', '')})")
     lines.append("")
 
     if "reproducibility" in report:
