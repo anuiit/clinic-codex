@@ -46,6 +46,8 @@ Puis, après examen du résultat :
 
 Linux : remplacer l'exécutable par `backend/.venv/bin/python`. Le script valide le JSON, crée/vérifie une sauvegarde, publie SQLite sans écraser une base existante et reste idempotent. Conserver le JSON de sauvegarde ; SQLite devient ensuite l'autorité. Les snapshots avancés antérieurs doivent être reconstruits avec le nouveau digest canonique. Ne pas restaurer seulement un ancien JSON après migration.
 
+Les anciennes bbox décimales sont arrondies comme lors de la sauvegarde d'une annotation. La prévisualisation affiche `normalized_bboxes` et `quarantined_invalid_bboxes` ; seules les boîtes réellement inutilisables sont omises de SQLite et leurs éléments redeviennent « à vérifier », hors entraînement. Le JSON original reste dans la sauvegarde vérifiée : revoir ces éléments manuellement après l'import.
+
 Une base illisible bloque l'API (503) et n'est jamais supprimée/recréée automatiquement. Le dossier complet contient aussi les sources et découpes nécessaires à une restauration cohérente.
 
 ## Vérification effectuée

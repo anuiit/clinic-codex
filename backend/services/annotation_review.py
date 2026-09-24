@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -607,6 +608,19 @@ class AnnotationReviewStore:
             raise AnnotationReviewValidationError("review manifest must contain a decisions object")
         return {"schema_version": manifest.get("schema_version", MANIFEST_SCHEMA_VERSION), "decisions": manifest["decisions"]}
 
+    @staticmethod
+    def _legacy_bbox(value: object) -> list[int] | None:
+        if (not isinstance(value, list) or len(value) != 4
+                or any(isinstance(part, bool) or not isinstance(part, (int, float))
+                       or (isinstance(part, float) and not math.isfinite(part)) for part in value)
+                or min(value[:2]) < 0 or min(value[2:]) <= 0):
+            return None
+        try:
+            bbox = list(normalize_bbox_to_int_pixels(value))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return bbox if min(bbox[:2]) >= 0 and min(bbox[2:]) > 0 else None
+
     def preview_legacy_import(self) -> dict[str, Any]:
         if not self.manifest_path.is_file():
             return {"status": "no_legacy_manifest", "decisions": 0}
@@ -614,6 +628,8 @@ class AnnotationReviewStore:
         manifest = json.loads(raw)
         if not isinstance(manifest, dict) or manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION or not isinstance(manifest.get("decisions"), dict):
             raise AnnotationReviewValidationError("legacy review-index.json has an unsupported schema")
+        quarantined: list[str] = []
+        normalized_bboxes = 0
         for key, decision in manifest["decisions"].items():
             if not isinstance(key, str) or not isinstance(decision, dict):
                 raise AnnotationReviewValidationError("legacy decision key/value is invalid")
@@ -630,10 +646,10 @@ class AnnotationReviewStore:
                 if not isinstance(name, str) or sanitize_class_name(name) != name:
                     raise ValueError("invalid class name")
                 bbox = decision.get("bbox")
-                if (not isinstance(bbox, list) or len(bbox) != 4
-                        or any(isinstance(value, bool) or not isinstance(value, int) for value in bbox)
-                        or min(bbox[:2]) < 0 or min(bbox[2:]) <= 0):
-                    raise ValueError("invalid bbox")
+                if self._legacy_bbox(bbox) is None:
+                    quarantined.append(key)
+                    continue
+                normalized_bboxes += any(isinstance(part, float) for part in bbox)
                 if "note" in decision:
                     sanitize_note(decision["note"])
                 if decision.get("dataset_split", "excluded") not in DATASET_SPLITS:
@@ -652,12 +668,17 @@ class AnnotationReviewStore:
             except (TypeError, ValueError) as exc:
                 raise AnnotationReviewValidationError(f"invalid legacy decision {key}: {exc}") from exc
         digest = hashlib.sha256(raw).hexdigest()
-        return {"status": "ready", "decisions": len(manifest["decisions"]), "sha256": digest}
+        return {"status": "ready", "decisions": len(manifest["decisions"]),
+                "importable_decisions": len(manifest["decisions"]) - len(quarantined),
+                "normalized_bboxes": normalized_bboxes,
+                "quarantined_invalid_bboxes": quarantined, "sha256": digest}
 
     def import_legacy_manifest(self) -> dict[str, Any]:
         preview = self.preview_legacy_import()
         if preview["status"] != "ready":
             return preview
+        if preview["decisions"] and not preview["importable_decisions"]:
+            raise AnnotationReviewValidationError("all legacy bboxes are invalid; refusing an empty import")
         if self.db_path.exists():
             with closing(sqlite3.connect(self.db_path, timeout=10)) as connection, connection:
                 row = connection.execute("SELECT value FROM review_meta WHERE key = 'legacy_sha256'").fetchone()
@@ -682,8 +703,11 @@ class AnnotationReviewStore:
         try:
             with closing(sqlite3.connect(staged, timeout=10)) as connection, connection:
                 self._create_schema(connection)
+                quarantined = set(preview["quarantined_invalid_bboxes"])
                 for key, old in manifest["decisions"].items():
-                    decision = {**old, "revision": 1}
+                    if key in quarantined:
+                        continue  # Raw decision remains in the verified backup; source returns to pending.
+                    decision = {**old, "bbox": self._legacy_bbox(old["bbox"]), "revision": 1}
                     encoded = json.dumps(decision, sort_keys=True, ensure_ascii=False)
                     connection.execute("INSERT INTO review_decisions VALUES (?, ?, ?)", (key, 1, encoded))
                     connection.execute("INSERT INTO review_history VALUES (?, ?, ?, ?)", (key, 1, "legacy_import", encoded))

@@ -361,3 +361,35 @@ def test_legacy_import_requires_explicit_apply_and_keeps_verified_backup(tmp_pat
     assert store.import_legacy_manifest()["status"] == "already_imported"
     assert store.list_queue()["analyses"][0]["elements"][0]["revision"] == 1
     assert store.set_status("legacy-1", 0, "pending", expected_revision=1)["element"]["revision"] == 2
+
+
+def test_legacy_import_normalizes_decimal_bboxes_and_quarantines_unusable_ones(tmp_path):
+    root = tmp_path / "annotations"
+    _save(root, "legacy-boxes", count=3)
+    store = AnnotationReviewStore(root)
+    elements = store.list_queue()["analyses"][0]["elements"]
+    decisions = {element["key"]: {
+        "analysis_id": "legacy-boxes", "index": element["index"], "status": "approved",
+        "source_fingerprint": element["source_fingerprint"], "class_name": element["class_name"],
+        "bbox": element["bbox"], "reviewed_at": "2026-01-01T00:00:00+00:00",
+    } for element in elements}
+    decisions["legacy-boxes:1"]["bbox"] = [1.2, 1.7, 4.0, 4.2]
+    decisions["legacy-boxes:2"]["bbox"] = [2, 2, 0, 4]
+    legacy_path = root / "review-index.json"
+    legacy_path.write_text(json.dumps({"schema_version": 1, "decisions": decisions}), encoding="utf-8")
+
+    preview = store.preview_legacy_import()
+    assert preview["decisions"] == 3
+    assert preview["importable_decisions"] == 2
+    assert preview["normalized_bboxes"] == 1
+    assert preview["quarantined_invalid_bboxes"] == ["legacy-boxes:2"]
+    assert not store.db_path.exists()
+
+    result = store.import_legacy_manifest()
+    assert result["status"] == "imported"
+    assert Path(result["backup"]).read_bytes() == legacy_path.read_bytes()
+    assert _status_map(store.list_queue(), "legacy-boxes") == {0: "approved", 1: "approved", 2: "pending"}
+    assert store.list_queue()["counts"]["trainable"] == 2
+    imported = store.export_review_manifest()["decisions"]
+    assert imported["legacy-boxes:1"]["bbox"] == [1, 2, 4, 4]
+    assert "legacy-boxes:2" not in imported
