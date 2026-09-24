@@ -33,6 +33,7 @@ if _BACKEND_ROOT not in sys.path:
 
 from services.annotation_storage import (  # noqa: E402
     AnnotationDiskFullError,
+    AnnotationConflictError,
     AnnotationPermissionError,
     decode_image_data_url,
     sanitize_note,
@@ -145,13 +146,13 @@ def test_enospc_raises_annotation_disk_full_error(tmp_path, monkeypatch):
         )
 
 
-def test_resave_same_analysis_id_overwrites(tmp_path):
-    """Re-saving the same analysis_id replaces the previous data atomically."""
+def test_resave_same_analysis_id_is_idempotent_or_conflicts(tmp_path):
+    """A submitted image and its annotations remain immutable."""
     base_dir = tmp_path / "annotations"
     base_dir.mkdir()
     analysis_id = "overwrite-test"
 
-    save_annotation(
+    first = save_annotation(
         analysis_id,
         _make_image(),
         _make_annotations(),
@@ -159,18 +160,15 @@ def test_resave_same_analysis_id_overwrites(tmp_path):
         elements_dir=tmp_path / "training_data" / "Elements",
     )
 
-    save_annotation(
-        analysis_id,
-        _make_image(),
-        [{"index": 0, "class_name": "atl", "bbox": [0, 0, 5, 5]}],
-        base_dir=base_dir,
-        elements_dir=tmp_path / "training_data" / "Elements",
-    )
+    retry = save_annotation(analysis_id, _make_image(), _make_annotations(), base_dir, base_dir)
+    assert retry["saved_count"] == first["saved_count"]
+    with pytest.raises(AnnotationConflictError):
+        save_annotation(analysis_id, _make_image(), [{"index": 0, "class_name": "atl", "bbox": [0, 0, 5, 5]}], base_dir, base_dir)
 
     ann_dir = base_dir / analysis_id
     meta = json.loads((ann_dir / "metadata.json").read_text())
-    assert len(meta["annotations"]) == 1
-    assert not (ann_dir / "elements" / "1.png").exists()
+    assert len(meta["annotations"]) == 2
+    assert (ann_dir / "elements" / "1.png").exists()
 
 
 def test_save_annotation_rounds_float_bbox_before_crop_and_metadata(tmp_path):
@@ -204,22 +202,10 @@ def test_decode_image_data_url_uses_strict_base64_validation():
         decode_image_data_url(invalid)
 
 
-def test_resave_same_analysis_id_uses_unique_temp_directory(tmp_path, monkeypatch):
-    """Each save attempt gets its own staging directory before replacing the target."""
+def test_resave_same_analysis_id_preserves_original_directory(tmp_path):
     base_dir = tmp_path / "annotations"
     base_dir.mkdir()
     analysis_id = "unique-temp-test"
-
-    import services.annotation_storage as _mod
-
-    original_move = _mod.shutil.move
-    staged_names: list[str] = []
-
-    def _record_move(src, dst, *args, **kwargs):
-        staged_names.append(Path(src).name)
-        return original_move(src, dst, *args, **kwargs)
-
-    monkeypatch.setattr(_mod.shutil, "move", _record_move)
 
     save_annotation(
         analysis_id,
@@ -228,18 +214,17 @@ def test_resave_same_analysis_id_uses_unique_temp_directory(tmp_path, monkeypatc
         base_dir=base_dir,
         elements_dir=tmp_path / "training_data" / "Elements",
     )
+    before = (base_dir / analysis_id / "metadata.json").read_bytes()
     save_annotation(
         analysis_id,
         _make_image(),
-        [{"index": 0, "class_name": "atl", "bbox": [0, 0, 5, 5]}],
+        _make_annotations(),
         base_dir=base_dir,
         elements_dir=tmp_path / "training_data" / "Elements",
     )
 
-    assert len(staged_names) == 2
-    assert staged_names[0].startswith(f".tmp-{analysis_id}-")
-    assert staged_names[1].startswith(f".tmp-{analysis_id}-")
-    assert staged_names[0] != staged_names[1]
+    assert (base_dir / analysis_id / "metadata.json").read_bytes() == before
+    assert not list(base_dir.glob(".tmp-*"))
 
 
 def test_sanitize_note_validation():
@@ -293,3 +278,17 @@ def test_save_annotation_rejects_invalid_note(tmp_path):
         )
     # failed save must not leave the target directory behind
     assert not (base_dir / "test-note2").exists()
+
+
+def test_submission_owner_and_original_filename_are_stable(tmp_path):
+    root = tmp_path / "annotations"
+    image = _make_image()
+    rows = _make_annotations()
+    save_annotation("owned", image, rows, root, root, author_id="alice", image_name=r"C:\pages\épreuve 1.png")
+    original = (root / "owned" / "metadata.json").read_bytes()
+    save_annotation("owned", image, rows, root, root, author_id="alice", image_name="épreuve 1.png")
+    assert (root / "owned" / "metadata.json").read_bytes() == original
+    assert json.loads(original)["image_name"] == "épreuve 1.png"
+    with pytest.raises(AnnotationConflictError):
+        save_annotation("owned", image, rows, root, root, author_id="bob", image_name="épreuve 1.png")
+    assert (root / "owned" / "metadata.json").read_bytes() == original

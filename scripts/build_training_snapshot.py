@@ -280,14 +280,15 @@ def load_live_annotation_rows(
     for annotations_dir in sorted(
         [path.expanduser().resolve() for path in annotations_dirs], key=str
     ):
-        review_index = annotations_dir / "review-index.json"
+        store = AnnotationReviewStore(annotations_dir)
+        review_sha = store.review_manifest_sha256()
         manifests.append(
             {
-                "path": repo_path(review_index),
-                "sha256": sha256_file(review_index),
+                "path": repo_path(annotations_dir),
+                "sha256": review_sha,
             }
         )
-        for item in AnnotationReviewStore(annotations_dir).iter_approved_annotations():
+        for item in store.iter_approved_annotations():
             class_name = normalized_name(item.get("class_name"))
             if class_name not in class_labels:
                 raise ValueError(f"approved annotation class absent from runtime: {class_name}")
@@ -323,6 +324,8 @@ def load_live_annotation_rows(
                     },
                 )
             )
+        if store.review_manifest_sha256() != review_sha:
+            raise ValueError("reviews changed during snapshot capture; retry")
     return manifests, rows
 
 
@@ -1004,7 +1007,7 @@ def plan_training_snapshot(
             "sha256": sha256_file(external_snapshot),
         },
         *[
-            {"kind": "annotation-review-index.v1", **manifest}
+            {"kind": "annotation-review-state.v1", **manifest}
             for manifest in annotation_manifests
         ],
     ]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import closing
 import sys
 from pathlib import Path
 
@@ -10,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from backend.services.annotation_review import MANIFEST_FILENAME, AnnotationReviewStore
+from backend.services.annotation_review import AnnotationReviewStore
 from backend.services.annotation_storage import save_annotation
 from scripts.export_approved_annotations import export_approved_annotations
 
@@ -43,16 +45,16 @@ def test_export_approved_annotations_materializes_only_trainable_approved_elemen
     store.set_status("approved-export-1", 3, "approved")
     (annotations_dir / "approved-export-1" / "elements" / "3.png").unlink()
 
-    manifest_path = annotations_dir / MANIFEST_FILENAME
-    manifest = json.loads(manifest_path.read_text())
-    manifest["decisions"]["orphan-1:0"] = {
+    orphan = {
         "analysis_id": "orphan-1",
         "index": 0,
         "status": "approved",
         "reviewed_at": "2026-05-26T00:00:00+00:00",
         "source_fingerprint": "missing",
     }
-    manifest_path.write_text(json.dumps(manifest))
+    with closing(sqlite3.connect(store.db_path)) as connection, connection:
+        connection.execute("INSERT INTO review_decisions VALUES (?, ?, ?)",
+                           ("orphan-1:0", 1, json.dumps(orphan)))
 
     output_dir = tmp_path / "approved" / "Elements"
     summary = export_approved_annotations(annotations_dir, output_dir)

@@ -7,10 +7,12 @@ import {
   deleteAnalysis,
   getAnalysisById,
   getHistory,
+  getLegacyImportCount,
   getLastStorageInitResult,
+  importLegacyHistory,
   initializeStorage,
-  normalizeAnalysisRecord,
   saveAnalysis,
+  setStorageAccount,
   updateElements,
 } from './storage';
 
@@ -69,34 +71,39 @@ describe('storage IndexedDB boundary compatibility', () => {
     await expect(getHistory()).resolves.toEqual([]);
   });
 
-  it('migrates old records without annotationStatus as draft-compatible records', async () => {
+  it('only imports old records after explicit consent, normalizing their annotation status', async () => {
     localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([RECORD]));
 
+    await expect(getHistory()).resolves.toEqual([]);
+    await expect(getLegacyImportCount()).resolves.toBe(1);
+    await expect(importLegacyHistory()).resolves.toBe(1);
     expect((await getHistory())[0]).toEqual(expect.objectContaining({ annotationStatus: {} }));
   });
 
-  it('retains legacy localStorage and writes an advisory marker after migration', async () => {
+  it('retains legacy localStorage and writes a marker only after explicit import', async () => {
     localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([RECORD]));
 
     await initializeStorage();
+    expect(localStorage.getItem(LEGACY_MIGRATION_MARKER_KEY)).toBeNull();
+    await importLegacyHistory();
 
     expect(localStorage.getItem(LEGACY_STORAGE_KEY)).toBe(JSON.stringify([RECORD]));
     expect(localStorage.getItem(LEGACY_MIGRATION_MARKER_KEY)).toContain('importedCount');
   });
 
-  it('migrates legacy arrays in original order and does not duplicate on repeated initialization', async () => {
-    const db = createMemoryStorageDb();
+  it('imports legacy arrays in original order and does not duplicate on repeated import', async () => {
+    const db = { ...createMemoryStorageDb(), close: () => undefined };
     resetWithDb(db);
     localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([RECORD, SECOND_RECORD]));
 
-    await initializeStorage();
+    await importLegacyHistory();
     __resetStorageForTests({ dbFactory: () => db });
-    await initializeStorage();
+    await expect(importLegacyHistory()).resolves.toBe(0);
 
     expect((await getHistory()).map((record) => record.id)).toEqual(['analysis-id', 'second-id']);
   });
 
-  it('shares concurrent initialization and imports legacy records once', async () => {
+  it('shares concurrent initialization without implicitly importing legacy records', async () => {
     const db = createMemoryStorageDb();
     const importSpy = vi.spyOn(db, 'importMissingRecords');
     resetWithDb(db);
@@ -104,17 +111,18 @@ describe('storage IndexedDB boundary compatibility', () => {
 
     const [first, second, third] = await Promise.all([getHistory(), initializeStorage(), getHistory()]);
 
-    expect(first.map((record) => record.id)).toEqual(['analysis-id', 'second-id']);
+    expect(first).toEqual([]);
     expect(second.ok).toBe(true);
-    expect(third.map((record) => record.id)).toEqual(['analysis-id', 'second-id']);
-    expect(importSpy).toHaveBeenCalledTimes(1);
+    expect(third).toEqual([]);
+    expect(importSpy).not.toHaveBeenCalled();
   });
 
-  it('merges missing legacy ids without overwriting existing IndexedDB records', async () => {
+  it('explicit import merges missing legacy ids without overwriting account records', async () => {
     const newerA = { ...RECORD, imageName: 'indexeddb-a.png' };
     resetWithDb(createMemoryStorageDb([newerA]));
     localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([RECORD, SECOND_RECORD]));
 
+    await expect(importLegacyHistory()).resolves.toBe(1);
     const history = await getHistory();
 
     expect(history.map((record) => record.id)).toEqual(['analysis-id', 'second-id']);
@@ -171,7 +179,7 @@ describe('storage IndexedDB boundary compatibility', () => {
     expect((await getHistory()).map((record) => record.id)).toEqual(['analysis-id']);
   });
 
-  it('falls back to read-only legacy history when IndexedDB initialization fails', async () => {
+  it('does not expose unowned legacy history when account storage fails', async () => {
     localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([RECORD]));
     __resetStorageForTests({
       dbFactory: () => {
@@ -179,8 +187,108 @@ describe('storage IndexedDB boundary compatibility', () => {
       },
     });
 
-    await expect(getHistory()).resolves.toEqual([normalizeAnalysisRecord(RECORD)]);
+    await expect(getHistory()).rejects.toThrow('open failed');
     await expect(saveAnalysis(cloneRecord(RECORD))).rejects.toThrow('open failed');
     expect(getLastStorageInitResult()).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  it('does not call a storage failure a missing analysis', async () => {
+    __resetStorageForTests({ dbFactory: () => { throw new Error('open failed'); } });
+    await expect(getAnalysisById('analysis-id')).rejects.toThrow('open failed');
+  });
+
+  it('reopens the database after a transient history read failure', async () => {
+    const stored = createMemoryStorageDb([RECORD]);
+    let openings = 0;
+    let reads = 0;
+    __resetStorageForTests({ dbFactory: () => {
+      openings += 1;
+      return {
+        ...stored,
+        listRecords: async () => {
+          reads += 1;
+          if (reads === 2) throw new Error('read failed');
+          return stored.listRecords();
+        },
+        close: () => undefined,
+      };
+    } });
+    await expect(getHistory()).rejects.toThrow('read failed');
+    await expect(getHistory()).resolves.toHaveLength(1);
+    expect(openings).toBe(2);
+  });
+
+  it('keeps records isolated across accounts', async () => {
+    const databases = new Map<string, AnalysisStorageDb>();
+    __resetStorageForTests({
+      dbFactory: (name) => {
+        if (!databases.has(name)) databases.set(name, { ...createMemoryStorageDb(), close: () => undefined });
+        return databases.get(name)!;
+      },
+    });
+    setStorageAccount('alice');
+    await saveAnalysis(RECORD);
+    setStorageAccount('bob');
+    await expect(getHistory()).resolves.toEqual([]);
+    await saveAnalysis(SECOND_RECORD);
+    setStorageAccount('alice');
+    expect((await getHistory()).map((record) => record.id)).toEqual(['analysis-id']);
+    setStorageAccount('bob');
+    expect((await getHistory()).map((record) => record.id)).toEqual(['second-id']);
+  });
+
+  it('reserves unowned history recovery for one explicitly allowed account', async () => {
+    localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([RECORD]));
+    setStorageAccount('alice');
+    await expect(getLegacyImportCount()).resolves.toBe(0);
+    await expect(importLegacyHistory()).rejects.toThrow('administration');
+    setStorageAccount('alice', true);
+    await expect(importLegacyHistory()).resolves.toBe(1);
+    setStorageAccount('bob', true);
+    await expect(getLegacyImportCount()).resolves.toBe(0);
+    await expect(importLegacyHistory()).rejects.toThrow('autre compte');
+  });
+
+  it('does not assign legacy history to a failed importer and hides it after a successful import', async () => {
+    localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([RECORD]));
+    let failImport = true;
+    const databases = new Map<string, AnalysisStorageDb>();
+    __resetStorageForTests({ dbFactory: (name) => {
+      if (!databases.has(name)) {
+        const stored = createMemoryStorageDb();
+        databases.set(name, {
+          ...stored,
+          close: () => undefined,
+          importMissingRecords: async (records) => {
+            if (failImport) throw new Error('import failed');
+            return stored.importMissingRecords(records);
+          },
+        });
+      }
+      return databases.get(name)!;
+    } });
+    setStorageAccount('alice', true);
+    await expect(importLegacyHistory()).rejects.toThrow('import failed');
+    expect(localStorage.getItem('clinic-codex-legacy-owner')).toBeNull();
+
+    failImport = false;
+    setStorageAccount('bob', true);
+    await expect(importLegacyHistory()).resolves.toBe(1);
+    await expect(getLegacyImportCount()).resolves.toBe(0);
+    expect((await getHistory()).map((record) => record.id)).toEqual(['analysis-id']);
+  });
+
+  it('does not complete legacy import when the old IndexedDB cannot be read', async () => {
+    localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([RECORD]));
+    vi.stubGlobal('indexedDB', { open: () => { throw new Error('old database blocked'); } });
+    try {
+      await expect(getLegacyImportCount()).rejects.toThrow('old database blocked');
+      await expect(importLegacyHistory()).rejects.toThrow('old database blocked');
+      expect(localStorage.getItem(LEGACY_MIGRATION_MARKER_KEY)).toBeNull();
+      expect(localStorage.getItem('clinic-codex-legacy-owner')).toBeNull();
+      await expect(getHistory()).resolves.toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

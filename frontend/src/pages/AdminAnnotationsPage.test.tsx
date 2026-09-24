@@ -19,6 +19,13 @@ import type {
 const apiMock = vi.hoisted(() => ({
   adminAnnotationMediaUrl: vi.fn((path: string) => `http://api.test${path}`),
   getClasses: vi.fn(),
+  getAdminClasses: vi.fn(),
+  confirmAdminClass: vi.fn(),
+  getAdminAnnotationHistory: vi.fn(),
+  restoreAdminAnnotationElement: vi.fn(),
+  getComparableModels: vi.fn(),
+  getAdminTrainingJob: vi.fn(),
+  startModelComparison: vi.fn(),
   getAdminAnnotationQueue: vi.fn(),
   getAdminTrainingSummary: vi.fn(),
   getLatestAdminTrainingJob: vi.fn(),
@@ -66,6 +73,7 @@ function queueWithStatuses(
         elements: [
           {
             key: "analysis-1:0",
+            revision: 0,
             analysis_id: "analysis-1",
             index: 0,
             class_name: "atl",
@@ -86,6 +94,7 @@ function queueWithStatuses(
           },
           {
             key: "analysis-1:1",
+            revision: 0,
             analysis_id: "analysis-1",
             index: 1,
             class_name: "calli",
@@ -180,6 +189,7 @@ function trainingSummary(
     },
     training_snapshot: {
       configured: true,
+      data_revision: "a".repeat(64),
       valid: true,
       snapshot_id: "snapshot-test",
       snapshot_manifest_sha256: "snapshot-sha",
@@ -211,6 +221,13 @@ describe("AdminAnnotationsPage", () => {
   beforeEach(() => {
     apiMock.adminAnnotationMediaUrl.mockClear();
     apiMock.getClasses.mockReset();
+    apiMock.getAdminClasses.mockReset();
+    apiMock.confirmAdminClass.mockReset();
+    apiMock.getAdminAnnotationHistory.mockReset();
+    apiMock.restoreAdminAnnotationElement.mockReset();
+    apiMock.getComparableModels.mockReset();
+    apiMock.getAdminTrainingJob.mockReset();
+    apiMock.startModelComparison.mockReset();
     apiMock.getAdminAnnotationQueue.mockReset();
     apiMock.getAdminTrainingSummary.mockReset();
     apiMock.getLatestAdminTrainingJob.mockReset();
@@ -221,6 +238,15 @@ describe("AdminAnnotationsPage", () => {
       num_classes: 2,
       class_names: ["atl", "calli"],
     });
+    apiMock.getAdminClasses.mockResolvedValue({
+      revision: "a".repeat(64),
+      classes: ["atl", "calli"].map((class_name, class_label) => ({
+        class_name, class_label, status: "active",
+        counts: { pending: 0, approved: 0, rejected: 0 }, trainable_count: 0,
+      })),
+    });
+    apiMock.getAdminAnnotationHistory.mockResolvedValue({ revision: 0, history: [] });
+    apiMock.getComparableModels.mockResolvedValue({ versions: [] });
   });
 
   it("renders the reference visual triage workstation with rows and decision inspector", async () => {
@@ -241,10 +267,9 @@ describe("AdminAnnotationsPage", () => {
       "aria-selected",
       "false",
     );
-    expect(screen.getByText(/codex-014/i)).toBeInTheDocument();
-    expect(screen.getByText(/restants/i)).toBeInTheDocument();
-    expect(screen.getByText(/inclus/i)).toBeInTheDocument();
-    expect(screen.getByText(/local/i)).toBeInTheDocument();
+    expect(screen.queryByText(/codex-014/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /retour à l’analyse/i })).toBeInTheDocument();
+    expect(screen.getByText(/options du poste/i)).toBeInTheDocument();
 
     expect(
       screen.getByRole("listbox", { name: /file de triage/i }),
@@ -274,13 +299,22 @@ describe("AdminAnnotationsPage", () => {
       screen.getByRole("button", { name: /ajuster à la vue/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: /découpe 0 pour atl/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole("img", { name: /découpe 0 pour atl/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/effet sur le dataset/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /valider/i })).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: /retrain/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps a legacy element with no bbox visible for correction", async () => {
+    const queue = queueWithStatuses("pending", "rejected");
+    queue.analyses[0].elements[0].bbox = [];
+    await renderLoaded(queue);
+
+    expect(screen.getAllByText("Zone à corriger").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /corriger/i })).toBeInTheDocument();
   });
 
   it("filters triage rows, recovers empty filters, and manually refreshes the queue", async () => {
@@ -324,9 +358,28 @@ describe("AdminAnnotationsPage", () => {
     );
     expect(
       await screen.findByLabelText(
-        /élément sélectionné 1 calli : statut Rejeté/i,
+        /élément sélectionné 0 atl : statut Validé/i,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows the Validés filter even when every annotation is approved", async () => {
+    const user = userEvent.setup();
+    const approvedQueue = queueWithStatuses("approved", "approved");
+    apiMock.getAdminAnnotationQueue.mockResolvedValue(approvedQueue);
+    render(<AdminAnnotationsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Validés" }));
+    const approvedList = screen.getByRole("listbox", { name: /file de triage/i });
+    expect(within(approvedList).getAllByRole("option")).toHaveLength(2);
+    expect(screen.getByRole("combobox", { name: /^statut$/i })).toHaveValue("approved");
+    await user.selectOptions(screen.getByRole("combobox", { name: /^classe$/i }), "atl");
+    expect(within(approvedList).getAllByRole("option")).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: /actualiser/i }));
+    await waitFor(() => expect(apiMock.getAdminAnnotationQueue).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("option", { name: /ouvrir l'élément 0 atl/i }))
+      .toHaveAccessibleName(/statut Validé/i);
   });
 
   it("keeps current queue visible when manual refresh fails", async () => {
@@ -447,6 +500,10 @@ describe("AdminAnnotationsPage", () => {
     await user.click(screen.getByRole("tab", { name: /dataset/i }));
 
     expect(screen.getByLabelText(/classes dataset/i)).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "SPAN" && element.textContent?.trim() === "1 découpe validée")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "SPAN" && element.textContent?.trim() === "1 image source")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Faibles" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /effacer/i })).toHaveLength(1);
     const datasetList = screen.getByRole("listbox", { name: /vue dataset/i });
     expect(datasetList).toBeInTheDocument();
     expect(
@@ -489,11 +546,39 @@ describe("AdminAnnotationsPage", () => {
       "true",
     );
     expect(
-      screen.getByRole("heading", { name: /élément #2 · atl/i }),
+      screen.getByRole("heading", { name: /élément #0 · atl/i }),
     ).toBeInTheDocument();
   });
 
-  it("renders Training disabled summary, guardrails, and readable metadata", async () => {
+  it("filters real classes named all and Sans nom separately from an unnamed row", async () => {
+    const user = userEvent.setup();
+    const queue = queueWithStatuses("approved", "approved");
+    queue.analyses[0].elements[0].class_name = "all";
+    queue.analyses[0].elements[1].class_name = "";
+    queue.analyses[0].elements.push({ ...queue.analyses[0].elements[1], key: "analysis-1:2", index: 2, class_name: "Sans nom" });
+    queue.counts = { total: 3, pending: 0, approved: 3, rejected: 0, trainable: 3 };
+    await renderLoaded(queue);
+    await user.click(screen.getByRole("tab", { name: /dataset/i }));
+
+    await user.click(screen.getByRole("button", { name: /^all 1$/i }));
+    expect(within(screen.getByRole("listbox", { name: /vue dataset/i })).getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByText("Classe : all")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /Sans nom \(non renseigné\) 1/i }));
+    expect(within(screen.getByRole("listbox", { name: /vue dataset/i })).getAllByRole("option")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: /^Sans nom 1$/i }));
+    expect(within(screen.getByRole("listbox", { name: /vue dataset/i })).getAllByRole("option")).toHaveLength(1);
+
+    await user.click(screen.getByRole("tab", { name: /trier/i }));
+    await user.selectOptions(screen.getByRole("combobox", { name: /^classe$/i }), "class:all");
+    expect(within(screen.getByRole("listbox", { name: /file de triage/i })).getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByText("Classe : all")).toBeVisible();
+    await user.selectOptions(screen.getByRole("combobox", { name: /^classe$/i }), "class:");
+    expect(within(screen.getByRole("listbox", { name: /file de triage/i })).getAllByRole("option")).toHaveLength(1);
+    await user.selectOptions(screen.getByRole("combobox", { name: /^classe$/i }), "class:Sans nom");
+    expect(within(screen.getByRole("listbox", { name: /file de triage/i })).getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("shows the candidate workflow and blocking reason without fake metrics", async () => {
     const user = userEvent.setup();
     apiMock.getAdminAnnotationQueue.mockResolvedValueOnce(
       queueWithStatuses("approved", "rejected"),
@@ -503,44 +588,114 @@ describe("AdminAnnotationsPage", () => {
     render(<AdminAnnotationsPage />);
     await user.click(await screen.findByRole("tab", { name: /entraîner/i }));
 
-    expect(
-      await screen.findByRole("heading", {
-        name: /réentraînement cumulatif local/i,
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/lancement bloqué/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/validations réellement utilisées dans le train/i).parentElement).toHaveTextContent("7 / 7");
-    expect(screen.queryByText(/disabled_by_default/i)).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/enable_admin_training_jobs=1/i),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/bash scripts\/retrain\.sh --dry-run/i),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getAllByText(/protection locale active/i).length,
-    ).toBeGreaterThan(0);
-    expect(document.body).not.toHaveTextContent(
-      /placeholder|LossSketch|ValidationAccuracySketch/i,
-    );
-    expect(
-      screen.getByRole("region", {
-        name: /résumé avant lancement de l'entraînement/i,
-      }),
-    ).toHaveTextContent(/bloquée par la protection backend/i);
-    expect(screen.getByText(/l'essai à blanc vérifie/i)).toBeInTheDocument();
-    expect(screen.getByText(/validés par classe/i)).toBeInTheDocument();
-    expect(screen.getByText(/atl: 1/i)).toBeInTheDocument();
-    expect(screen.getByText(/fichiers produits/i)).toBeInTheDocument();
-    expect(
-      screen.getAllByText(/approved_export_manifest/i).length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("button", { name: /lancer l'essai à blanc/i }),
-    ).toBeDisabled();
+    expect(await screen.findByRole("heading", { name: /créer un candidat/i })).toBeInTheDocument();
+    expect(screen.getByText(/il ne sera pas activé automatiquement/i)).toBeInTheDocument();
+    expect(screen.getByText(/préparation bloquée/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 annotations utilisables/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /vérifier la préparation/i })).toBeDisabled();
+    expect(document.body).not.toHaveTextContent(/placeholder|LossSketch|ValidationAccuracySketch/i);
   });
 
-  it("surfaces incomplete Training split metadata instead of showing fake zero counts", async () => {
+  it("renders training without annotation queue access for the ML operator", async () => {
+    apiMock.getAdminTrainingSummary.mockResolvedValueOnce(trainingSummary());
+    render(<AdminAnnotationsPage initialTab="training" canReadQueue={false} />);
+    expect(await screen.findByRole("heading", { name: /créer un candidat/i })).toBeInTheDocument();
+    expect(apiMock.getAdminAnnotationQueue).not.toHaveBeenCalled();
+    expect(apiMock.getAdminClasses).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: /trier/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /dataset/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /classes/i })).not.toBeInTheDocument();
+  });
+
+  it("lets a read-only training user inspect readiness without offering a launch", async () => {
+    apiMock.getAdminTrainingSummary.mockResolvedValueOnce(trainingSummary({
+      training_jobs_enabled: true,
+      launch_allowed_for_request: true,
+      launch_disabled_reasons: [],
+    }));
+    render(<AdminAnnotationsPage initialTab="training" canReadQueue={false} canRunTraining={false} />);
+
+    expect(await screen.findByRole("button", { name: /vérifier la préparation/i })).toBeDisabled();
+    expect(screen.getByText(/autorisation de lancement requise/i)).toBeInTheDocument();
+    expect(apiMock.startAdminTrainingJob).not.toHaveBeenCalled();
+  });
+
+  it("does not offer training tabs to a reviewer", async () => {
+    apiMock.getAdminAnnotationQueue.mockResolvedValueOnce(queueWithStatuses("pending", "rejected"));
+    render(<AdminAnnotationsPage canReadTraining={false} />);
+    expect(await screen.findByRole("listbox", { name: /file de triage/i })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /entraîner/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /comparer/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a retryable panel when the review queue fails, then recovers", async () => {
+    apiMock.getAdminAnnotationQueue
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValueOnce(queueWithStatuses("pending", "rejected"));
+    render(<AdminAnnotationsPage />);
+    const panel = await screen.findByRole("tabpanel", { name: /panneau trier/i });
+    expect(await within(panel).findByText("File de triage indisponible")).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Réessayer" }));
+    expect(await within(panel).findByRole("listbox", { name: /file de triage/i })).toBeInTheDocument();
+  });
+
+  it("keeps the independent Classes panel visible if the review queue fails", async () => {
+    apiMock.getAdminAnnotationQueue.mockRejectedValueOnce(new Error("storage unavailable"));
+    render(<AdminAnnotationsPage initialTab="classes" />);
+    const panel = await screen.findByRole("tabpanel", { name: /panneau classes/i });
+    expect(await within(panel).findByRole("heading", { name: "Classes disponibles" })).toBeInTheDocument();
+  });
+
+  it("explains the legacy review import without calling it a stale annotation", async () => {
+    const queue = queueWithStatuses("pending", "approved");
+    queue.review_store = { mode: "legacy_readonly", legacy_decisions: 1 };
+    apiMock.getAdminAnnotationQueue.mockResolvedValue(queue);
+    render(<AdminAnnotationsPage />);
+
+    expect(await screen.findByText(/anciennes validations à importer/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 validation conservée/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /valider/i })).toBeDisabled();
+  });
+
+  it("groups classes by action and keeps active-model classes collapsed", async () => {
+    apiMock.getAdminAnnotationQueue.mockResolvedValue(queueWithStatuses("pending", "rejected"));
+    apiMock.getAdminClasses.mockResolvedValue({
+      revision: "a".repeat(64),
+      classes: [
+        { class_name: "atl", class_label: 2, status: "active", counts: { pending: 0, approved: 1, rejected: 0 }, trainable_count: 1 },
+        { class_name: "tzapotl", class_label: null, status: "unconfirmed", counts: { pending: 1, approved: 1, rejected: 0 }, trainable_count: 0 },
+        { class_name: "maya", class_label: 9, status: "candidate", counts: { pending: 0, approved: 1, rejected: 0 }, trainable_count: 1 },
+      ],
+    });
+    render(<AdminAnnotationsPage initialTab="classes" />);
+
+    expect(await screen.findByRole("heading", { name: /à confirmer/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /nouvelles confirmées/i })).toBeInTheDocument();
+    expect(screen.getByText("tzapotl")).toBeInTheDocument();
+    expect(screen.getByText("maya")).toBeInTheDocument();
+    expect(screen.getByText(/classes du modèle actif/i).closest("details")).not.toHaveAttribute("open");
+    expect(await screen.findByRole("region", { name: "Classes illustrées" })).toHaveTextContent("atl");
+    expect(await screen.findByAltText("Exemple 1 de atl")).toHaveAttribute(
+      "src", "http://api.test/admin/annotations/analysis-1/0/crop",
+    );
+  });
+
+  it("illustrates pending class reviews with a pending crop, not an already approved crop", async () => {
+    const queue = queueWithStatuses("approved", "pending");
+    queue.analyses[0].elements[1].class_name = "atl";
+    apiMock.getAdminAnnotationQueue.mockResolvedValue(queue);
+    apiMock.getAdminClasses.mockResolvedValue({
+      revision: "a".repeat(64),
+      classes: [{ class_name: "atl", class_label: 2, status: "active", counts: { pending: 1, approved: 1, rejected: 0 }, trainable_count: 1 }],
+    });
+
+    render(<AdminAnnotationsPage initialTab="classes" />);
+
+    expect(await within(await screen.findByRole("region", { name: "Classes illustrées" })).findByRole("img", { name: "Exemple de atl" }))
+      .toHaveAttribute("src", "http://api.test/admin/annotations/analysis-1/1/crop");
+  });
+
+  it("does not invent split metrics when Training metadata is incomplete", async () => {
     const user = userEvent.setup();
     const incompleteSummary = trainingSummary();
     delete (incompleteSummary.data as Partial<typeof incompleteSummary.data>)
@@ -553,64 +708,97 @@ describe("AdminAnnotationsPage", () => {
     render(<AdminAnnotationsPage />);
     await user.click(await screen.findByRole("tab", { name: /entraîner/i }));
 
-    expect(await screen.findByRole("alert", { name: "" })).toHaveTextContent(
-      /résumé d'entraînement incomplet/i,
-    );
+    expect(await screen.findByRole("heading", { name: /créer un candidat/i })).toBeInTheDocument();
     expect(
       screen.queryByText(/split locked: train 0/i),
     ).not.toBeInTheDocument();
   });
 
-  it("updates Training pre-action summary for dry-run versus full-training choices", async () => {
+  it("keeps technical Training options behind an advanced disclosure", async () => {
     const user = userEvent.setup();
     apiMock.getAdminAnnotationQueue.mockResolvedValueOnce(
       queueWithStatuses("approved", "rejected"),
     );
+    const summary = trainingSummary({
+      training_jobs_enabled: true,
+      launch_allowed_for_request: true,
+      launch_disabled_reasons: [],
+    });
+    summary.training_snapshot.new_classes = ["teocomitl", "tzapotl"];
     apiMock.getAdminTrainingSummary.mockResolvedValueOnce(
-      trainingSummary({
-        training_jobs_enabled: true,
-        launch_allowed_for_request: true,
-        launch_disabled_reasons: [],
-      }),
+      summary,
     );
 
     render(<AdminAnnotationsPage />);
     await user.click(await screen.findByRole("tab", { name: /entraîner/i }));
 
-    const summary = await screen.findByRole("region", {
-      name: /résumé avant lancement de l'entraînement/i,
-    });
-    expect(
-      within(summary).getByText(/prêt pour essai local/i),
-    ).toBeInTheDocument();
-    expect(
-      within(summary).getByText(/essai à blanc sélectionné/i),
-    ).toBeInTheDocument();
-    expect(
-      within(summary).getByText(/sans lancer l'entraînement/i),
-    ).toBeInTheDocument();
-    expect(within(summary).getAllByText(/auto/i).length).toBeGreaterThan(0);
-    expect(within(summary).getByText("16")).toBeInTheDocument();
-
-    await user.selectOptions(screen.getByLabelText(/essai à blanc/i), "no");
+    expect(await screen.findByRole("button", { name: /vérifier la préparation/i })).toBeEnabled();
+    expect(screen.getByText("Nouvelles classes incluses : teocomitl, tzapotl")).toBeInTheDocument();
+    expect(screen.getByText(/options avancées/i)).toBeInTheDocument();
+    await user.click(screen.getByText(/options avancées/i));
     await user.selectOptions(screen.getByLabelText(/machine/i), "cpu");
     await user.clear(screen.getByLabelText(/taille de lot/i));
     await user.type(screen.getByLabelText(/taille de lot/i), "8");
+    expect(screen.getByLabelText(/machine/i)).toHaveValue("cpu");
+    expect(screen.getByLabelText(/taille de lot/i)).toHaveValue(8);
+    expect(screen.getByRole("button", { name: /vérifier la préparation/i })).toBeEnabled();
+  });
 
-    expect(
-      within(summary).getByText(/entraînement complet sélectionné/i),
-    ).toBeInTheDocument();
-    expect(
-      within(summary).getByText(/candidat local/i),
-    ).toBeInTheDocument();
-    expect(
-      within(summary).getAllByText(/contrat d'évaluation promotion/i).length,
-    ).toBeGreaterThan(0);
-    expect(within(summary).getByText(/cpu/i)).toBeInTheDocument();
-    expect(within(summary).getByText("8")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /lancer l'entraînement/i }),
-    ).toBeEnabled();
+  it("shows candidate results with training and held-out counts without claiming generalization", async () => {
+    const user = userEvent.setup();
+    apiMock.getAdminAnnotationQueue.mockResolvedValueOnce(queueWithStatuses("approved", "rejected"));
+    apiMock.getAdminTrainingSummary.mockResolvedValueOnce(trainingSummary({
+      training_jobs_enabled: true,
+      launch_allowed_for_request: true,
+      launch_disabled_reasons: [],
+      latest_job: trainingJob({
+        kind: "training", status: "succeeded", dry_run: false, model_version_id: "candidate-3",
+        result: {
+          unique_count: 5, duplicate_count: 0, updated_classes: ["atl"],
+          base_correct: 1, active_correct: 1, candidate_correct: 3,
+          train_count: 3, holdout: { support: 2, base_correct: 1, candidate_correct: 1 },
+          generalization_validated: false,
+        } as AdminTrainingJob["result"],
+      }),
+    }));
+
+    render(<AdminAnnotationsPage />);
+    await user.click(await screen.findByRole("tab", { name: /entraîner/i }));
+    expect(await screen.findByText(/apprentissage.*actuel 1\/3.*candidat 3\/3/i)).toBeVisible();
+    expect(screen.getByText(/test réservé.*actuel 1\/2.*candidat 1\/2/i)).toBeVisible();
+    expect(screen.getByText(/généralisation non validée/i)).toBeVisible();
+  });
+
+  it("keeps candidate results visible after the latest job becomes a comparison", async () => {
+    apiMock.getAdminAnnotationQueue.mockResolvedValueOnce(queueWithStatuses("approved", "rejected"));
+    apiMock.getAdminTrainingSummary.mockResolvedValueOnce(trainingSummary({
+      latest_job: trainingJob({ kind: "comparison", status: "succeeded", dry_run: false }),
+      latest_training_job: trainingJob({
+        kind: "training", status: "succeeded", dry_run: false, model_version_id: "candidate-3",
+        result: { train_count: 3, active_correct: 1, candidate_correct: 3 } as AdminTrainingJob["result"],
+      }),
+    }));
+    render(<AdminAnnotationsPage />);
+    await userEvent.click(await screen.findByRole("tab", { name: /entraîner/i }));
+    expect(await screen.findByText(/apprentissage.*actuel 1\/3.*candidat 3\/3/i)).toBeVisible();
+  });
+
+  it("explains a backend training refusal instead of showing only a generic launch error", async () => {
+    const user = userEvent.setup();
+    apiMock.getAdminAnnotationQueue.mockResolvedValueOnce(queueWithStatuses("approved", "rejected"));
+    apiMock.getAdminTrainingSummary.mockResolvedValue(trainingSummary({
+      training_jobs_enabled: true,
+      launch_allowed_for_request: true,
+      launch_disabled_reasons: [],
+    }));
+    apiMock.startAdminTrainingJob.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 403, data: { error: "legacy_reviews_require_import" } },
+    });
+    render(<AdminAnnotationsPage />);
+    await user.click(await screen.findByRole("tab", { name: /entraîner/i }));
+    await user.click(await screen.findByRole("button", { name: /vérifier la préparation/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/anciennes validations doivent être importées/i);
   });
 
   it("validates Training launch inputs before calling the backend", async () => {
@@ -629,33 +817,21 @@ describe("AdminAnnotationsPage", () => {
     render(<AdminAnnotationsPage />);
     await user.click(await screen.findByRole("tab", { name: /entraîner/i }));
 
-    await screen.findByRole("button", { name: /lancer l'essai à blanc/i });
+    await screen.findByRole("button", { name: /vérifier la préparation/i });
+    await user.click(screen.getByText(/options avancées/i));
     await user.clear(screen.getByLabelText(/taille de lot/i));
     await user.type(screen.getByLabelText(/taille de lot/i), "999");
     await user.click(
-      screen.getByRole("button", { name: /lancer l'essai à blanc/i }),
+      screen.getByRole("button", { name: /vérifier la préparation/i }),
     );
 
     expect(
       await screen.findByText(
-        /taille de lot doit être un entier entre 1 et 256/i,
+        /taille de lot : entier entre 1 et 256/i,
       ),
     ).toBeInTheDocument();
     expect(apiMock.startAdminTrainingJob).not.toHaveBeenCalled();
 
-    await user.clear(screen.getByLabelText(/taille de lot/i));
-    await user.type(screen.getByLabelText(/taille de lot/i), "8");
-    await user.type(screen.getByLabelText(/notes/i), "x".repeat(201));
-    await user.click(
-      screen.getByRole("button", { name: /lancer l'essai à blanc/i }),
-    );
-
-    expect(
-      await screen.findByText(
-        /notes de lancement doivent contenir 200 caractères ou moins/i,
-      ),
-    ).toBeInTheDocument();
-    expect(apiMock.startAdminTrainingJob).not.toHaveBeenCalled();
   }, 15_000);
 
   it("explains when local retraining is blocked because no element is trainable", async () => {
@@ -686,11 +862,11 @@ describe("AdminAnnotationsPage", () => {
 
     expect(
       await screen.findByText(
-        /dataset insuffisant : validez au moins un élément à jour/i,
+        /validez au moins une annotation utilisable dans Trier/i,
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /lancer l'essai à blanc/i }),
+      screen.getByRole("button", { name: /vérifier la préparation/i }),
     ).toBeDisabled();
   });
 
@@ -705,7 +881,7 @@ describe("AdminAnnotationsPage", () => {
     apiMock.getAdminAnnotationQueue.mockResolvedValueOnce(
       queueWithStatuses("approved", "rejected"),
     );
-    apiMock.getAdminTrainingSummary.mockResolvedValueOnce(
+    apiMock.getAdminTrainingSummary.mockResolvedValue(
       trainingSummary({
         training_jobs_enabled: true,
         launch_allowed_for_request: true,
@@ -720,14 +896,15 @@ describe("AdminAnnotationsPage", () => {
 
     render(<AdminAnnotationsPage />);
     await user.click(await screen.findByRole("tab", { name: /entraîner/i }));
-    await screen.findByRole("button", { name: /lancer l'essai à blanc/i });
+    await screen.findByRole("button", { name: /vérifier la préparation/i });
+    await user.click(screen.getByText(/options avancées/i));
     await user.selectOptions(screen.getByLabelText(/machine/i), "cpu");
     await user.clear(screen.getByLabelText(/taille de lot/i));
     await user.type(screen.getByLabelText(/taille de lot/i), "8");
     await user.type(screen.getByLabelText(/notes/i), "smoke");
 
     await user.click(
-      screen.getByRole("button", { name: /lancer l'essai à blanc/i }),
+      screen.getByRole("button", { name: /vérifier la préparation/i }),
     );
 
     await waitFor(() => {
@@ -736,19 +913,18 @@ describe("AdminAnnotationsPage", () => {
         device: "cpu",
         batch_size: 8,
         notes: "smoke",
+        expected_data_revision: "a".repeat(64),
       });
     });
-    expect(
-      await screen.findByText(/dernier essai run-started/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Vérification ·/i)).toBeInTheDocument();
     expect(screen.getByText(/mock dry run started/i)).not.toBeVisible();
     expect(
-      screen.getByText(/bash scripts\/retrain\.sh --dry-run/i),
-    ).not.toBeVisible();
-    await user.click(screen.getAllByText(/détails support\/admin/i)[0]);
+      screen.queryByText(/bash scripts\/retrain\.sh --dry-run/i),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByText(/détails techniques et journal/i));
     expect(screen.getByText(/mock dry run started/i)).toBeVisible();
     expect(
-      screen.getByRole("button", { name: /entraînement en cours/i }),
+      screen.getByRole("button", { name: /en cours/i }),
     ).toBeDisabled();
   }, 15_000);
 
@@ -776,21 +952,93 @@ describe("AdminAnnotationsPage", () => {
         "analysis-1",
         0,
         "approved",
+        0,
       );
     });
-    expect(
-      await screen.findByText(/élément 0 marqué comme Validé/i),
-    ).toBeInTheDocument();
+    const confirmation = await screen.findByText(/Validé · atl/i);
+    expect(confirmation.closest('[role="status"]')).not.toBeNull();
     expect(
       await screen.findByLabelText(
-        /élément sélectionné 1 calli : statut À vérifier/i,
+        /élément sélectionné 0 atl : statut Validé/i,
       ),
     ).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "Validés" }));
+    const approvedList = screen.getByRole("listbox", { name: /file de triage/i });
+    expect(within(approvedList).getAllByRole("option")).toHaveLength(1);
+    expect(within(approvedList).getByRole("option", { name: /ouvrir l'élément 0 atl/i }))
+      .toHaveAccessibleName(/statut Validé/i);
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /^statut$/i }), "pending");
+    expect(screen.getByRole("heading", { name: /élément #1 · calli/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /rejeter/i }));
     expect(
       await screen.findByText(/mais la file n'a pas pu être actualisée/i),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(/mais la file n'a pas pu être actualisée/i).closest('[role="alert"]'),
+    ).not.toBeNull();
+  });
+
+  it("keeps the next pending row selected after validating within the pending filter", async () => {
+    const user = userEvent.setup();
+    const before = queueWithStatuses("pending", "pending");
+    const after = queueWithStatuses("pending", "approved");
+    const third = {
+      ...before.analyses[0].elements[1],
+      key: "analysis-1:2",
+      index: 2,
+      class_name: "bet",
+    };
+    before.analyses[0].elements.push(third);
+    after.analyses[0].elements.push(third);
+    before.counts.total = 3;
+    before.counts.pending = 3;
+    after.counts.total = 3;
+    after.counts.pending = 2;
+    apiMock.getAdminAnnotationQueue
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(after);
+    apiMock.setAdminAnnotationReviewStatus.mockResolvedValue({ status: "ok" });
+
+    render(<AdminAnnotationsPage />);
+    await screen.findByRole("option", { name: /ouvrir l'élément 1 calli/i });
+    await user.click(screen.getByRole("button", { name: "À vérifier" }));
+    await user.click(screen.getByRole("option", { name: /ouvrir l'élément 1 calli/i }));
+    await user.click(screen.getByRole("button", { name: /valider/i }));
+
+    expect(
+      await screen.findByRole("heading", { name: /élément #2 · bet/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /ouvrir l'élément 2 bet/i }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("reports a restored revision as successful when only queue refresh fails", async () => {
+    const user = userEvent.setup();
+    const queue = queueWithStatuses("approved", "rejected");
+    queue.analyses[0].elements[0].revision = 1;
+    apiMock.getAdminAnnotationQueue
+      .mockResolvedValueOnce(queue)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(queue);
+    apiMock.getAdminAnnotationHistory.mockResolvedValue({
+      revision: 1,
+      history: [{ revision: 0, action: "created", status: "pending", class_name: "atl", bbox: [0, 1, 2, 3] }],
+    });
+    apiMock.restoreAdminAnnotationElement.mockResolvedValue({ status: "ok" });
+
+    render(<AdminAnnotationsPage />);
+    await screen.findByRole("listbox", { name: /file de triage/i });
+    await user.click(screen.getByText("Historique des corrections"));
+    await user.click(await screen.findByRole("button", { name: "Restaurer" }));
+
+    const warning = await screen.findByText(/Version 0 restaurée.*file n'a pas pu être actualisée/i);
+    expect(warning.closest('[role="alert"]')).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: /actualiser/i }));
+    await waitFor(() => expect(screen.queryByText(/Version 0 restaurée.*file n'a pas pu être actualisée/i)).not.toBeInTheDocument());
+    expect(screen.queryByText(/Impossible de restaurer cette version/i)).not.toBeInTheDocument();
   });
 
   it("pauses automatic refresh while correction is open and saves through modify endpoint", async () => {
@@ -955,6 +1203,8 @@ describe("AdminAnnotationsPage", () => {
             class_name: "new-atl",
             bbox: [10, 20, 50, 60],
             approve_after_save: undefined,
+            expected_revision: 0,
+            note: "",
           },
         );
       });
@@ -985,7 +1235,7 @@ describe("AdminAnnotationsPage", () => {
 
   it("saves an edit and marks it approved when using Enregistrer et valider", async () => {
     const user = userEvent.setup();
-    const refreshed = queueWithStatuses("pending", "rejected");
+    const refreshed = queueWithStatuses("approved", "rejected");
     apiMock.getAdminAnnotationQueue
       .mockResolvedValueOnce(queueWithStatuses("pending", "rejected"))
       .mockResolvedValue(refreshed);
@@ -1012,12 +1262,39 @@ describe("AdminAnnotationsPage", () => {
           class_name: "atl",
           bbox: [0, 1, 2, 3],
           approve_after_save: true,
+          expected_revision: 0,
+          note: "",
         },
       );
     });
     expect(
       await screen.findByText(/élément 0 enregistré et validé/i),
     ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Validés" }));
+    expect(screen.getByRole("option", { name: /ouvrir l'élément 0 atl/i }))
+      .toHaveAccessibleName(/statut Validé/i);
+  });
+
+  it("keeps a correction dirty when its already selected row is clicked again", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const logout = vi.fn();
+    apiMock.getAdminAnnotationQueue.mockResolvedValue(queueWithStatuses("pending", "rejected"));
+    render(<AdminAnnotationsPage authSlot={<button type="button" data-auth-logout onClick={logout}>Déconnexion</button>} />);
+    try {
+      await user.click(await screen.findByRole("button", { name: /corriger/i }));
+      await user.clear(screen.getByLabelText(/nom de l'élément/i));
+      await user.type(screen.getByLabelText(/nom de l'élément/i), "new-atl");
+      await user.click(screen.getByRole("option", { name: /ouvrir l'élément 0 atl/i }));
+      await user.click(screen.getByRole("button", { name: "Déconnexion" }));
+      expect(logout).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("tab", { name: /dataset/i }));
+      expect(confirm).toHaveBeenCalled();
+      expect(screen.getByRole("tab", { name: /trier/i })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByLabelText(/nom de l'élément/i)).toHaveValue("new-atl");
+    } finally {
+      confirm.mockRestore();
+    }
   });
 
   it("shows a visible error when editing fails to save", async () => {
@@ -1068,5 +1345,20 @@ describe("AdminAnnotationsPage", () => {
       screen.getAllByLabelText(/statut À vérifier/i).length,
     ).toBeGreaterThan(1);
     expect(apiMock.getAdminAnnotationQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the conflict explanation visible after refreshing a stale decision", async () => {
+    const user = userEvent.setup();
+    apiMock.getAdminAnnotationQueue.mockResolvedValue(queueWithStatuses("pending", "pending"));
+    apiMock.setAdminAnnotationReviewStatus.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 409, data: { error_code: "ANNOTATION_CONFLICT" } },
+    });
+
+    render(<AdminAnnotationsPage />);
+    await user.click(await screen.findByRole("button", { name: /rejeter/i }));
+
+    await waitFor(() => expect(apiMock.getAdminAnnotationQueue).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("alert")).toHaveTextContent(/cet élément a changé depuis son chargement/i);
   });
 });

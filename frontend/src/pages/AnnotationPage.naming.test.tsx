@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnalysisRecord } from "../types";
+import type { ReactNode } from "react";
 
 vi.mock("../services/storage", () => ({
   getAnalysisById: vi.fn(),
@@ -55,12 +56,12 @@ const CONTAINER_RECT = {
   toJSON: () => {},
 } as DOMRect;
 
-function renderPage(record: AnalysisRecord = BASE_RECORD) {
+function renderPage(record: AnalysisRecord = BASE_RECORD, authSlot?: ReactNode) {
   vi.mocked(getAnalysisById).mockResolvedValue(record);
   return render(
     <MemoryRouter initialEntries={["/annotation/test-id"]}>
       <Routes>
-        <Route path="/annotation/:id" element={<AnnotationPage />} />
+        <Route path="/annotation/:id" element={<AnnotationPage authSlot={authSlot} />} />
         <Route path="/" element={<div>home</div>} />
       </Routes>
     </MemoryRouter>,
@@ -111,7 +112,57 @@ beforeEach(() => {
 });
 
 describe("AnnotationPage element naming UX", () => {
-  it("restarts toast expiry and cancels it when the editor unmounts", async () => {
+  it("distinguishes unavailable local storage from a missing analysis and retries", async () => {
+    vi.mocked(getAnalysisById).mockRejectedValueOnce(new Error("IndexedDB unavailable")).mockResolvedValueOnce(BASE_RECORD);
+    render(
+      <MemoryRouter initialEntries={["/annotation/test-id"]}>
+        <Routes>
+          <Route path="/annotation/:id" element={<AnnotationPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("heading", { name: /stockage local indisponible/i })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: /réessayer/i }));
+    expect(await screen.findByRole("button", { name: "Marquer les éléments nommés comme prêts" })).toBeVisible();
+  });
+
+  it("keeps an unsaved annotation when logout is declined", async () => {
+    const user = userEvent.setup();
+    const logout = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage(BASE_RECORD, <button type="button" data-auth-logout onClick={logout}>Déconnexion</button>);
+    try {
+      await user.click(await screen.findByRole("button", { name: "Marquer les éléments nommés comme prêts" }));
+      await user.click(screen.getByRole("button", { name: "Déconnexion" }));
+      expect(confirm).toHaveBeenCalled();
+      expect(logout).not.toHaveBeenCalled();
+    } finally {
+      confirm.mockRestore();
+    }
+  });
+
+  it("warns before leaving unsaved annotation changes and stops warning after save", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+    try {
+      await user.click(await screen.findByRole("button", { name: "Marquer les éléments nommés comme prêts" }));
+      await user.click(screen.getByRole("link", { name: "Retour" }));
+      expect(confirm).toHaveBeenCalled();
+      expect(screen.queryByText("home")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Enregistrer" }));
+      await waitFor(() => expect(updateElements).toHaveBeenCalled());
+      confirm.mockClear();
+      await user.click(screen.getByRole("link", { name: "Retour" }));
+      expect(confirm).not.toHaveBeenCalled();
+      expect(screen.getByText("home")).toBeInTheDocument();
+    } finally {
+      confirm.mockRestore();
+    }
+  });
+
+  it("keeps review submission errors visible until the editor unmounts", async () => {
     vi.useFakeTimers();
     const { result, unmount } = renderHook(() => useAnnotationSubmission({
       id: BASE_RECORD.id,
@@ -122,15 +173,9 @@ describe("AnnotationPage element naming UX", () => {
     }));
     try {
       await act(() => result.current.handleSendSubmittedForReview());
-      expect(vi.getTimerCount()).toBe(1);
-      act(() => vi.advanceTimersByTime(3000));
-      await act(() => result.current.handleSendSubmittedForReview());
-      expect(vi.getTimerCount()).toBe(1);
-      act(() => vi.advanceTimersByTime(1000));
+      expect(vi.getTimerCount()).toBe(0);
+      act(() => vi.advanceTimersByTime(4000));
       expect(result.current.toast?.msg).toBe("Nothing submitted");
-      act(() => vi.advanceTimersByTime(3000));
-      expect(result.current.toast).toBeNull();
-      await act(() => result.current.handleSendSubmittedForReview());
       unmount();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -403,6 +448,9 @@ describe("AnnotationPage element naming UX", () => {
       annotationStatus: { 0: "validated", 1: "draft" },
     });
 
+    expect(await screen.findByTestId("annotation-admin-notice")).toHaveTextContent(
+      /1 prêt pour revue · 1 brouillon.*envoi définitif/i,
+    );
     await user.click(await screen.findByText("Envoyer pour revue"));
 
     expect(updateElements).toHaveBeenCalledWith(
@@ -610,7 +658,7 @@ describe("AnnotationPage element naming UX", () => {
     const chrome = screen.getByTestId("annotation-page-chrome");
     const topbar = container.querySelector(".annotation-topbar") as HTMLElement;
     expect(chrome).toContainElement(topbar);
-    expect(within(chrome).getByRole("link", { name: "Retour" })).toBeInTheDocument();
+    expect(within(chrome).getByRole("link", { name: "Retour" })).toHaveAttribute("href", "/?analysis=test-id");
     expect(
       within(chrome).getByRole("button", {
         name: "Marquer les éléments nommés comme prêts",

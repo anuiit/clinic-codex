@@ -9,6 +9,7 @@ import {
   logout as logoutRequest,
 } from "../services/api";
 import type { AuthSession, AuthUser, LoginPayload } from "../types";
+import { setStorageAccount } from "../services/storage";
 
 type AuthStatus = "loading" | "disabled" | "unauthenticated" | "authenticated" | "error";
 type AuthContextValue = {
@@ -30,6 +31,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>(bypassAuthForSmoke ? "disabled" : "loading");
   const [user, setUser] = useState<AuthUser | null>(null);
   const applySession = useCallback((session: AuthSession) => {
+    setStorageAccount(session.user?.id ?? (session.auth_enabled ? null : "local"),
+      session.user?.roles.includes("org_admin") ?? false);
     setAuthEnabled(session.auth_enabled);
     setUser(session.user);
     setStatus(!session.auth_enabled ? "disabled" : session.user ? "authenticated" : "unauthenticated");
@@ -41,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void getAuthSession().then((session) => { if (active) applySession(session); }).catch((error: unknown) => {
       if (!active) return;
       setUser(null);
+      setStorageAccount(null);
       setAuthEnabled(true);
       setStatus(isUnauthorized(error) ? "unauthenticated" : "error");
     });
@@ -53,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const logout = useCallback(async () => {
     await logoutRequest();
+    setStorageAccount(null);
     setUser(null);
     setStatus(authEnabled ? "unauthenticated" : "disabled");
   }, [authEnabled]);
@@ -102,6 +107,7 @@ export function AuthStatusMenu() {
       </span>
       <button
         type="button"
+        data-auth-logout
         className="ui-action-ghost rounded-full px-3 py-1.5"
         onClick={() => {
           setLogoutError(null);

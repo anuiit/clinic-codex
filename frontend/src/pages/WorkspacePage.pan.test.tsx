@@ -28,12 +28,15 @@ const RECORD: AnalysisRecord = {
 };
 
 vi.mock('../services/storage', () => ({
+  getLegacyImportCount: vi.fn(async () => 0),
+  importLegacyHistory: vi.fn(async () => 0),
   deleteAnalysis: vi.fn(async () => undefined),
   getHistory: vi.fn(async () => [RECORD]),
   saveAnalysis: vi.fn(async () => undefined),
 }));
 
 vi.mock('../services/api', () => ({
+  adminAnnotationMediaUrl: (path: string) => path,
   getTrust: vi.fn(() => Promise.resolve(null)),
   segmentGlyph: vi.fn(),
 }));

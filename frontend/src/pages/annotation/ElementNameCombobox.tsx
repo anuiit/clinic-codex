@@ -12,6 +12,7 @@ interface ElementNameComboboxProps {
   labels: typeof appText.annotation;
   index: number;
   onCommit: (name: string) => void;
+  onInputChange?: (name: string) => void;
 }
 export function ElementNameCombobox({
   value,
@@ -22,6 +23,7 @@ export function ElementNameCombobox({
   labels,
   index,
   onCommit,
+  onInputChange,
 }: ElementNameComboboxProps) {
   return (
     <ClassNameCombobox
@@ -33,6 +35,7 @@ export function ElementNameCombobox({
       labels={labels}
       index={index}
       onCommit={onCommit}
+      onInputChange={onInputChange}
       className={`${annotationStyles.owner} annotation-name-combobox`}
       menuClassName="annotation-name-combobox__menu annotation-name-combobox__menu--portal"
     />

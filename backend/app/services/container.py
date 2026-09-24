@@ -87,7 +87,7 @@ class DefaultServices:
         with self.settings.class_config_path.open() as f:
             return json.load(f)
 
-    def save_annotation(self, analysis_id: str, image, annotations: list[dict], *, author_id: str | None = None) -> dict[str, Any]:
+    def save_annotation(self, analysis_id: str, image, annotations: list[dict], *, author_id: str | None = None, image_name: str | None = None) -> dict[str, Any]:
         return save_annotation(
             analysis_id,
             image,
@@ -95,6 +95,7 @@ class DefaultServices:
             base_dir=self.settings.annotations_dir,
             elements_dir=self.settings.elements_dir,
             author_id=author_id,
+            image_name=image_name,
         )
 
     def decode_annotation_image(self, data_url: str):
@@ -119,9 +120,11 @@ class DefaultServices:
         status: str,
         *, reviewer_id: str | None = None,
         allow_self_review: bool = False,
+        expected_revision: int | None = None,
     ) -> dict[str, Any]:
         return self.annotation_review_store().set_status(
             analysis_id, index, status, reviewer_id=reviewer_id, allow_self_review=allow_self_review,
+            expected_revision=expected_revision,
         )
 
     def modify_annotation_review_element(
@@ -132,8 +135,11 @@ class DefaultServices:
         class_name: str,
         bbox: list[int | float],
         status: str = "pending",
+        note: str | None = None,
+        note_present: bool = False,
         reviewer_id: str | None = None,
         allow_self_review: bool = False,
+        expected_revision: int | None = None,
     ) -> dict[str, Any]:
         return self.annotation_review_store().modify_element(
             analysis_id,
@@ -141,7 +147,19 @@ class DefaultServices:
             class_name=class_name,
             bbox=bbox,
             status=status,
+            **({"note": note} if note_present else {}),
             reviewer_id=reviewer_id,
+            allow_self_review=allow_self_review,
+            expected_revision=expected_revision,
+        )
+
+    def annotation_review_history(self, analysis_id: str, index: int) -> dict[str, Any]:
+        return self.annotation_review_store().history_for(analysis_id, index)
+
+    def restore_annotation_review_element(self, analysis_id: str, index: int, *, target_revision: int, expected_revision: int, reviewer_id: str | None = None, allow_self_review: bool = False) -> dict[str, Any]:
+        return self.annotation_review_store().restore_element(
+            analysis_id, index, target_revision=target_revision,
+            expected_revision=expected_revision, reviewer_id=reviewer_id,
             allow_self_review=allow_self_review,
         )
 

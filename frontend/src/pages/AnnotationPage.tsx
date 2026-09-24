@@ -1,7 +1,8 @@
 import { Link, useParams, useSearchParams } from "react-router";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ImageBBoxStage } from "../components/ImageBBoxStage";
+import { UnsavedNavigationPrompt } from "../components/UnsavedNavigationPrompt";
 import type { ThemeMode } from "../components/ThemeToggle";
 import { appText } from "../i18n/text";
 import { AnnotationAnalyzerToolbar } from "./AnnotationAnalyzerToolbar";
@@ -43,20 +44,26 @@ type AnnotationPageProps = {
   themeMode?: ThemeMode;
   onToggleTheme?: () => void;
   authSlot?: ReactNode;
+  guardRouteTransitions?: boolean;
 };
 
 export default function AnnotationPage({
   themeMode = "dark",
   onToggleTheme = () => undefined,
   authSlot,
+  guardRouteTransitions = false,
 }: AnnotationPageProps = {}) {
+  const allowLeaveRef = useRef(false);
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const t = appText.annotation;
+  const [imageReadyRecordId, setImageReadyRecordId] = useState<string | null>(null);
+  const [nameInputDirty, setNameInputDirty] = useState(false);
+  const [noteInputDirty, setNoteInputDirty] = useState(false);
 
   const elementParam = searchParams.get("element");
   const initialFocusedIdx =
-    elementParam !== null && !Number.isNaN(Number(elementParam))
+    elementParam !== null && Number.isInteger(Number(elementParam)) && Number(elementParam) >= 0
       ? Number(elementParam)
       : null;
 
@@ -70,6 +77,7 @@ export default function AnnotationPage({
     setCustomClasses: annotation.setCustomClasses,
     focusedIdx: annotation.focusedIdx,
     cardRefs: annotation.cardRefs,
+    listReady: !annotation.loading,
   });
   const {
     containerRef,
@@ -108,6 +116,8 @@ export default function AnnotationPage({
     setHoveredIdx: annotation.setHoveredIdx,
     setNamingFocusToken: model.setNamingFocusToken,
     loading: annotation.loading,
+    initialFocusedIdx,
+    imageReady: imageReadyRecordId === id && annotation.record?.id === id,
   });
   const submission = useAnnotationSubmission({
     id,
@@ -119,11 +129,24 @@ export default function AnnotationPage({
       submitBlockedNone: t.submitBlockedNone,
     },
   });
+  const dirty = submission.dirty || nameInputDirty || noteInputDirty;
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   if (!annotation.record && !annotation.loading) {
     return (
       <div className="ui-empty-state mx-auto max-w-2xl px-6 py-12 text-center">
-        <h2 className="ui-title-md mb-4 text-2xl">{t.notFound}</h2>
+        <h2 className="ui-title-md mb-4 text-2xl">{annotation.storageError ? "Stockage local indisponible" : t.notFound}</h2>
+        {annotation.storageError ? <p className="mb-4">L'analyse n'a pas été supprimée. Vérifiez l'accès au stockage du navigateur.</p> : null}
+        {annotation.storageError ? <button type="button" className="ui-action-primary mb-4 rounded-full px-3 py-1.5" onClick={annotation.retryLoad}>Réessayer</button> : null}
         <Link
           to="/"
           className="ui-action-ghost inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium"
@@ -143,10 +166,29 @@ export default function AnnotationPage({
   }
 
   return (
-    <div className={`${annotationStyles.owner} annotation-app flex h-full min-h-0 w-full flex-col gap-0 overflow-hidden rounded-none p-0`}>
+    <div
+      className={`${annotationStyles.owner} annotation-app flex h-full min-h-0 w-full flex-col gap-0 overflow-hidden rounded-none p-0`}
+      onClickCapture={(event) => {
+        if (!dirty || !(event.target instanceof Element)) return;
+        if (event.target.closest("[data-auth-logout]")) {
+          if (!window.confirm("Les modifications de cette annotation ne sont pas enregistrées. Se déconnecter quand même ?")) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return;
+        }
+        if (!event.target.closest("a[href]")) return;
+        if (!window.confirm("Les modifications de cette annotation ne sont pas enregistrées. Quitter quand même ?")) event.preventDefault();
+        else allowLeaveRef.current = true;
+      }}
+    >
+      {guardRouteTransitions ? <UnsavedNavigationPrompt dirty={dirty} allowLeaveRef={allowLeaveRef} message="Les modifications de cette annotation ne sont pas enregistrées. Quitter quand même ?" /> : null}
       <AnnotationPageChrome
         labels={t}
+        analysisId={id}
         imageName={annotation.record?.imageName}
+        readyCount={model.submittedCount}
+        totalCount={annotation.elements.length}
         saving={submission.saving}
         sending={submission.sending}
         onSubmitNamed={model.submitNamedElements}
@@ -273,6 +315,7 @@ export default function AnnotationPage({
             onLoad: () => {
               updateStageSize();
               handlePreviewImageLoad();
+              setImageReadyRecordId(id ?? null);
             },
           }}
           svgProps={{
@@ -297,8 +340,16 @@ export default function AnnotationPage({
             customClasses={annotation.customClasses}
             namingFocusToken={model.namingFocusToken}
             labels={t}
-            onCommitElementName={model.commitElementName}
-            onCommitElementNote={model.commitElementNote}
+            onCommitElementName={(idx, name) => {
+              model.commitElementName(idx, name);
+              setNameInputDirty(false);
+            }}
+            onNameInputChange={(name) => setNameInputDirty(name !== (annotation.elements[annotation.focusedIdx ?? -1]?.class_name ?? ""))}
+            onCommitElementNote={(idx, note) => {
+              model.commitElementNote(idx, note);
+              setNoteInputDirty(false);
+            }}
+            onNoteInputChange={(note) => setNoteInputDirty(note.trim() !== (annotation.elements[annotation.focusedIdx ?? -1]?.note ?? ""))}
             onSetElementValidation={(idx, submitted) =>
               model.setElementValidation(idx, submitted ? "validated" : "draft")
             }

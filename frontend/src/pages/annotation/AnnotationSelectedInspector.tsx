@@ -20,7 +20,9 @@ interface AnnotationSelectedInspectorProps {
   namingFocusToken: number;
   labels: typeof appText.annotation;
   onCommitElementName: (idx: number, name: string) => void;
+  onNameInputChange?: (name: string) => void;
   onCommitElementNote: (idx: number, note: string) => void;
+  onNoteInputChange?: (note: string) => void;
   onSetElementValidation: (idx: number, submitted: boolean) => void;
   onRemoveElement: (idx: number) => void;
 }
@@ -37,7 +39,9 @@ export function AnnotationSelectedInspector({
   namingFocusToken,
   labels,
   onCommitElementName,
+  onNameInputChange,
   onCommitElementNote,
+  onNoteInputChange,
   onSetElementValidation,
   onRemoveElement,
 }: AnnotationSelectedInspectorProps) {
@@ -133,6 +137,7 @@ export function AnnotationSelectedInspector({
                   labels={labels}
                   index={focusedIdx}
                   onCommit={(name) => onCommitElementName(focusedIdx, name)}
+                  onInputChange={onNameInputChange}
                 />
               </div>
               <ActionButton
@@ -171,6 +176,7 @@ export function AnnotationSelectedInspector({
                 id="annotation-element-note"
                 data-testid="annotation-element-note"
                 defaultValue={focusedElement.note ?? ""}
+                onChange={(event) => onNoteInputChange?.(event.target.value)}
                 onBlur={(event) => commitNote(event.target.value)}
                 placeholder={labels.elementNotePlaceholder}
                 rows={2}

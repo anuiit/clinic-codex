@@ -2,6 +2,7 @@ import styles from "./DatasetTab.module.css";
 import { useMemo, useState } from "react";
 import { ActionButton, PillButton } from "../../components/ui/AdminPrimitives";
 import { ReferenceTileArt } from "./ReferenceGlyphArt";
+import { AdminMediaImage } from "./AdminMediaImage";
 import { adminAnnotationMediaUrl } from "../../services/api";
 import type { AdminAnnotationElement, AdminAnnotationQueue } from "../../types";
 import { DATASET_SPLIT_LABEL, TRAINABLE_DATASET_SPLITS, datasetRows, STATUS_LABEL, type DatasetRow, type DatasetSplitFilter, type TrainableDatasetSplit } from "./model";
@@ -14,16 +15,14 @@ function DatasetFilterSummary({
   splitFilter,
   classFilter,
   rows,
-  onClear,
 }: {
   total: number;
   filtered: number;
   splitFilter: DatasetSplitFilter;
-  classFilter: string;
+  classFilter: string | null;
   rows: DatasetRow[];
-  onClear: () => void;
 }) {
-  const hasActiveFilters = splitFilter !== "all" || classFilter !== "all";
+  const hasActiveFilters = splitFilter !== "all" || classFilter !== null;
   const visibleSplitCounts = rows.reduce<TrainableSplitCounts>(
     (counts, row) => ({
       ...counts,
@@ -51,22 +50,10 @@ function DatasetFilterSummary({
             {splitFilter !== "all" ? (
               <li>Split : {DATASET_SPLIT_LABEL[splitFilter]}</li>
             ) : null}
-            {classFilter !== "all" ? <li>Classe : {classFilter}</li> : null}
+            {classFilter !== null ? <li>Classe : {classFilter || "Sans nom (non renseigné)"}</li> : null}
           </ul>
-        ) : (
-          <span>
-            Aucun filtre : toutes les images validées et utilisables sont visibles.
-          </span>
-        )}
+        ) : null}
       </div>
-      <ActionButton
-        tone="ghost"
-        className="min-h-7 px-2.5 py-1"
-        disabled={!hasActiveFilters}
-        onClick={onClear}
-      >
-        Effacer les filtres
-      </ActionButton>
     </section>
   );
 }
@@ -79,15 +66,16 @@ export function DatasetTab({
   onJumpToReview: (element: AdminAnnotationElement) => void;
 }) {
   const [splitFilter, setSplitFilter] = useState<DatasetSplitFilter>("all");
-  const [classFilter, setClassFilter] = useState("all");
+  const [classFilter, setClassFilter] = useState<string | null>(null);
   const [selectedDatasetKey, setSelectedDatasetKey] = useState<string | null>(
     null,
   );
   const rows = useMemo(() => datasetRows(queue), [queue]);
+  const imageCount = useMemo(() => new Set(rows.map((row) => row.analysis.analysis_id)).size, [rows]);
   const classCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const row of rows) {
-      const className = row.element.class_name || "Sans nom";
+      const className = row.element.class_name ?? "";
       counts.set(className, (counts.get(className) ?? 0) + 1);
     }
     return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
@@ -98,8 +86,7 @@ export function DatasetTab({
         const splitMatches =
           splitFilter === "all" || row.element.dataset_split === splitFilter;
         const classMatches =
-          classFilter === "all" ||
-          (row.element.class_name || "Sans nom") === classFilter;
+          classFilter === null || (row.element.class_name ?? "") === classFilter;
         return splitMatches && classMatches;
       }),
     [classFilter, rows, splitFilter],
@@ -123,35 +110,36 @@ export function DatasetTab({
 
   const clearDatasetFilters = () => {
     setSplitFilter("all");
-    setClassFilter("all");
+    setClassFilter(null);
   };
 
   return (
     <section className={`${styles.owner} admin-dataset-reference-shell`}>
       <header className="admin-dataset-reference-top">
         <div className="summary">
-          <span><strong>{rows.length}</strong> images incluses</span>
+          <span><strong>{rows.length}</strong> découpe{rows.length === 1 ? "" : "s"} validée{rows.length === 1 ? "" : "s"}</span>
+          <span><strong>{imageCount}</strong> image{imageCount === 1 ? "" : "s"} source{imageCount === 1 ? "" : "s"}</span>
           <span><strong>{classCounts.length}</strong> classes</span>
           <span>
             <strong>{splitCounts.train}/{splitCounts.val}/{splitCounts.test}</strong> train/val/test
           </span>
         </div>
         {selectedRow ? (
-          <ActionButton
-            tone="primary"
-            className="min-h-8 px-3 py-1.5"
-            onClick={() => onJumpToReview(selectedRow.element)}
-          >
-            Ouvrir dans le triage
-          </ActionButton>
+          <div className="flex items-center gap-2">
+            <span className="max-w-48 truncate text-xs" title={selectedRow.analysis.image_name || selectedRow.analysis.analysis_id}>
+              {selectedRow.analysis.image_name || selectedRow.analysis.analysis_id}
+            </span>
+            <ActionButton tone="primary" className="min-h-8 px-3 py-1.5" onClick={() => onJumpToReview(selectedRow.element)}>
+              Ouvrir dans le triage
+            </ActionButton>
+          </div>
         ) : null}
       </header>
 
       <div className="dataset-shell-reference">
         <aside className="classes-reference" aria-label="Classes dataset">
           <div className="mini-toolbar-reference">
-            <PillButton active={classFilter === "all"} onClick={() => setClassFilter("all")}>Toutes</PillButton>
-            <PillButton disabled>Faibles</PillButton>
+            <PillButton active={classFilter === null} onClick={() => setClassFilter(null)}>Toutes</PillButton>
           </div>
           <div className="class-list-reference">
             {classCounts.map(([className, count]) => (
@@ -161,11 +149,8 @@ export function DatasetTab({
                 className={`class-row-reference ${classFilter === className ? "active" : ""}`}
                 onClick={() => setClassFilter(className)}
               >
-                <b>{className}</b>
+                <b>{className || "Sans nom (non renseigné)"}</b>
                 <span className="count">{count}</span>
-                <span className={`health ${count >= 4 ? "ok" : count >= 2 ? "low" : "bad"}`}>
-                  {count >= 4 ? "ok" : count >= 2 ? "faible" : "bas"}
-                </span>
               </button>
             ))}
           </div>
@@ -184,7 +169,7 @@ export function DatasetTab({
             ))}
             <PillButton
               className="ml-auto"
-              disabled={splitFilter === "all" && classFilter === "all"}
+              disabled={splitFilter === "all" && classFilter === null}
               onClick={clearDatasetFilters}
             >
               Effacer
@@ -197,7 +182,6 @@ export function DatasetTab({
             splitFilter={splitFilter}
             classFilter={classFilter}
             rows={filteredRows}
-            onClear={clearDatasetFilters}
           />
 
           {filteredRows.length ? (
@@ -218,16 +202,18 @@ export function DatasetTab({
                   >
                     <ReferenceTileArt>
                       {element.crop_exists ? (
-                        <img
+                        <AdminMediaImage
                           src={adminAnnotationMediaUrl(element.crop_url)}
                           alt={`Découpe dataset ${element.index} pour ${element.class_name}`}
+                          loading="lazy"
+                          decoding="async"
                         />
                       ) : (
                         <span>Découpe manquante</span>
                       )}
                     </ReferenceTileArt>
                     <span className="tile-foot-reference">
-                      <span>#{element.index}</span>
+                      <span title={row.analysis.image_name || row.analysis.analysis_id}>#{element.index} · {row.analysis.image_name || row.analysis.analysis_id}</span>
                       <span className={`split ${element.dataset_split}`}>{DATASET_SPLIT_LABEL[element.dataset_split]}</span>
                     </span>
                   </button>

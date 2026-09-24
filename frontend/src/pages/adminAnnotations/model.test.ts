@@ -12,6 +12,7 @@ function element(
 ) {
   return {
     key: `analysis-1:${index}`,
+    revision: 0,
     analysis_id: "analysis-1",
     index,
     class_name: `class-${index}`,
@@ -61,8 +62,8 @@ function queue(): AdminAnnotationQueue {
 }
 
 describe("admin annotation model filters", () => {
-  it("keeps already-approved elements out of the Trier queue", () => {
-    expect(reviewRows(queue()).map((row) => row.element.index)).toEqual([0, 3]);
+  it("keeps every review status available, including approved but nontrainable elements", () => {
+    expect(reviewRows(queue()).map((row) => row.element.index)).toEqual([0, 1, 2, 3]);
   });
 
   it("keeps Dataset limited to validated trainable crops", () => {

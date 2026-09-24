@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import styles from "./ReviewEditor.module.css";
 import {
   ActionButton,
@@ -19,6 +19,7 @@ import {
   AdminCorrectionStage,
   type AdminCorrectionBBox,
 } from "./AdminCorrectionStage";
+import { AdminMediaImage } from "./AdminMediaImage";
 
 const CLASS_NAME_LABELS: ClassNameComboboxLabels = {
   suggestions: "Classes existantes",
@@ -50,18 +51,21 @@ export function ElementEditor({
   mutating,
   onAnnuler,
   onModify,
+  onDirtyChange,
 }: {
   analysis: AdminAnnotationAnalysis;
   element: AdminAnnotationElement;
   classNames: string[];
   mutating: boolean;
   onAnnuler: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onModify: (
     element: AdminAnnotationElement,
     payload: AdminAnnotationModifyPayload,
   ) => void;
 }) {
   const [className, setClassName] = useState(element.class_name);
+  const [note, setNote] = useState(element.note ?? "");
   const [bbox, setBbox] = useState<AdminCorrectionBBox>(
     toBboxTuple(element.bbox),
   );
@@ -72,6 +76,10 @@ export function ElementEditor({
   const normalizedClassName = normalizeClassName(className);
   const bboxChanged = !sameBbox(bbox, originalBbox);
   const classChanged = normalizedClassName !== element.class_name.trim();
+  const noteChanged = note !== (element.note ?? "");
+  useEffect(() => {
+    onDirtyChange?.(bboxChanged || classChanged || noteChanged);
+  }, [bboxChanged, classChanged, noteChanged, onDirtyChange]);
   const imageUrl = adminAnnotationMediaUrl(analysis.image_url);
   const cropUrl = versionedMediaUrl(
     element.crop_url,
@@ -107,6 +115,8 @@ export function ElementEditor({
     onModify(element, {
       class_name: normalizedClassName,
       bbox,
+      note,
+      expected_revision: element.revision,
       approve_after_save: approveAfterSave || undefined,
     });
   };
@@ -175,6 +185,17 @@ export function ElementEditor({
               ))}
             </fieldset>
 
+            <label className="admin-field">
+              <span>Note de l’annotateur</span>
+              <textarea
+                className="ui-input"
+                value={note}
+                maxLength={2000}
+                disabled={mutating}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </label>
+
             <div
               className="admin-correction-context"
               aria-label="Comparaison avant et après correction"
@@ -182,7 +203,7 @@ export function ElementEditor({
               <figure>
                 <figcaption>Découpe actuelle</figcaption>
                 {element.crop_exists ? (
-                  <img
+                  <AdminMediaImage
                     src={cropUrl}
                     alt={`Découpe actuelle ${element.index} pour ${element.class_name}`}
                   />
@@ -193,7 +214,7 @@ export function ElementEditor({
               <figure>
                 <figcaption>Aperçu corrigé</figcaption>
                 {!bboxChanged && element.crop_exists ? (
-                  <img
+                  <AdminMediaImage
                     src={cropUrl}
                     alt={`Aperçu corrigé de l'élément ${element.index}`}
                   />

@@ -26,7 +26,7 @@ See [ANNOTATIONS.md](ANNOTATIONS.md) for the full annotation/export/retraining p
 
 - **Backend**: Flask API serving segmentation, classification, similarity/trust helpers, classes, and annotation persistence. Default port: `7117`.
 - **Frontend**: React + Vite + Tailwind application. Default port: `7118`.
-- **Annotation storage**: backend-owned filesystem data under `backend/annotations/<analysis_id>/`, with element-level admin decisions in `backend/annotations/review-index.json`.
+- **Annotation storage**: immutable submissions under `backend/annotations/<analysis_id>/`; transactional decisions, history and confirmed classes in `backend/annotations/review-state.sqlite3`. Existing `review-index.json` installations need an explicit backed-up import.
 - **Training/versioning scripts**: the app uses `scripts/retrain_local.py`; prepared-corpus workflows use `scripts/build_training_snapshot.py`, `scripts/retrain.sh` or `scripts/retrain.ps1`.
 
 ## Requirements
@@ -99,16 +99,19 @@ The standard local mode combines the **shipped model base and all current approv
 
 1. Upload and analyze an image, open its annotation editor, correct boxes and labels, and mark the desired elements ready.
 2. Send the annotations, then open **Admin → Review** and approve them.
-3. Open **Training**, run the dry run, then select **Non, entraînement complet** and launch.
-4. Inspect the candidate path and result in Training.
+3. In **Classes**, explicitly confirm any new label before learning it.
+4. In **Entraîner**, click **Vérifier la préparation**, then **Créer un candidat**.
+5. Open **Comparer les modèles** to inspect identical examples, source pages and metrics.
 
 Each run captures current approved crops and review decisions automatically. Exact duplicate images count once; conflicting labels for identical images are rejected. Stale decisions and missing crops are excluded. Repeating the same approvals does not count their contribution twice.
 
-The backbone and projection stay frozen. The update adapts prototypes for existing base-model classes; it does not train MobileSAM or introduce new classes. The original base provides the prior even when its training images are unavailable.
+The backbone and projection stay frozen. The update adapts existing prototypes and adds explicitly confirmed new classes with stable numeric IDs. It does not train MobileSAM. Every run rebuilds from the immutable shipped prior plus current approvals, so reruns do not compound previous candidates.
 
-Candidates are stored under `backend/model_registry/versions/<version_id>/`, with provenance and checksums. They are **not activated**; promotion is blocked because this local mode has no independent holdout. Reported base/candidate scores measure training-image fit, not better generalization. The running model is unchanged and no restart is needed.
+Candidates are stored under `backend/model_registry/versions/<version_id>/`, with provenance and checksums. They are **not activated** and promotion remains blocked. Source pages are reserved before fitting where enough examples exist. Reports separate training fit, reserved-page tests and new-class performance; independence from historical base training remains unknown. A tiny or absent holdout cannot establish generalization.
 
 See [the operator guide](docs/admin-model-retraining-workflow.md) for permissions and advanced corpus mode.
+
+See the [2026-09-17 delivery guide and verification](docs/retraining-stability-delivery.md) for new classes, undo, legacy migration and the limits of the measured results.
 
 Script matrix:
 

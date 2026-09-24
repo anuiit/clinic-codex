@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useImageStageViewport } from "../../components/ImageBBoxStage";
 import { useAnnotationPreviewCanvas } from "./useAnnotationPreviewCanvas";
 import { useBBoxEditing } from "./useBBoxEditing";
@@ -16,6 +16,8 @@ export function useAnnotationViewport({
   setHoveredIdx,
   setNamingFocusToken,
   loading,
+  initialFocusedIdx,
+  imageReady,
 }: UseAnnotationViewportOptions) {
   const [showLabelNames, setShowLabelNames] = useState(false);
   const stageViewport = useImageStageViewport({
@@ -24,6 +26,15 @@ export function useAnnotationViewport({
     loading,
     resetKey: record?.id ?? null,
   });
+  const focusedOnLoad = useRef<string | null>(null);
+  useEffect(() => {
+    if (!record || initialFocusedIdx === null || !imageReady || !stageViewport.isMeasured) return;
+    const bbox = elements[initialFocusedIdx]?.bbox;
+    const key = `${record.id}:${initialFocusedIdx}`;
+    if (!bbox || focusedOnLoad.current === key) return;
+    stageViewport.focusBBox(bbox);
+    focusedOnLoad.current = key;
+  }, [record, elements, initialFocusedIdx, imageReady, stageViewport]);
   const history = useBBoxHistory({
     resetKey: record?.id ?? null,
     setElements,

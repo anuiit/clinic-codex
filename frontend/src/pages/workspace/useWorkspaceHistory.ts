@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router";
-import { deleteAnalysis, getHistory } from "../../services/storage";
+import { useSearchParams } from "react-router";
+import { deleteAnalysis, getHistory, getLegacyImportCount, importLegacyHistory } from "../../services/storage";
 import type { AnalysisRecord } from "../../types";
 import {
   getWorkspaceElementClassName,
@@ -21,8 +21,6 @@ export function resolveCurrentRecord(
 }
 
 export function useWorkspaceHistory() {
-  const navigate = useNavigate();
-  const location = useLocation();
   const [searchParams] = useSearchParams();
   const initialPreferredId = searchParams.get("analysis");
   const initializedRef = useRef(false);
@@ -32,22 +30,26 @@ export function useWorkspaceHistory() {
   const [filter, setFilter] = useState("");
   const [historyOpen, setHistoryOpen] = useState(true);
   const [storageLoading, setStorageLoading] = useState(true);
-
-  useEffect(() => {
-    if (location.pathname === "/" && searchParams.get("analysis")) {
-      navigate("/", { replace: true });
-    }
-  }, [location.pathname, navigate, searchParams]);
+  const [legacyImportCount, setLegacyImportCount] = useState(0);
+  const [legacyImportError, setLegacyImportError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
 
   const selectRecord = (record: AnalysisRecord | null) => {
     setCurrentRecord(record);
   };
 
   const syncRecords = useCallback(async (preferredId?: string | null) => {
-    const nextRecords = await getHistory();
-    setRecords(nextRecords);
-    selectRecord(resolveCurrentRecord(nextRecords, preferredId));
-    return nextRecords;
+    try {
+      const nextRecords = await getHistory();
+      setRecords(nextRecords);
+      selectRecord(resolveCurrentRecord(nextRecords, preferredId));
+      setStorageError(null);
+      return nextRecords;
+    } catch (issue) {
+      setStorageError("Stockage local indisponible. Vos analyses n'ont pas été effacées.");
+      throw issue;
+    }
   }, []);
 
   useEffect(() => {
@@ -56,12 +58,16 @@ export function useWorkspaceHistory() {
     getHistory()
       .then((nextRecords) => {
         if (!active) return;
+        setStorageError(null);
         setRecords(nextRecords);
         setCurrentRecord(resolveCurrentRecord(nextRecords, initialPreferredId));
         if (!initializedRef.current) {
           setHistoryOpen(!resolveCurrentRecord(nextRecords, initialPreferredId));
           initializedRef.current = true;
         }
+      })
+      .catch(() => {
+        if (active) setStorageError("Stockage local indisponible. Vos analyses n'ont pas été effacées.");
       })
       .finally(() => {
         if (active) setStorageLoading(false);
@@ -72,9 +78,36 @@ export function useWorkspaceHistory() {
     };
   }, [initialPreferredId]);
 
+  const refreshLegacyImportCount = useCallback(() => getLegacyImportCount().then((count) => {
+      setLegacyImportCount(count);
+      setLegacyImportError(null);
+    }).catch(() => {
+      setLegacyImportError("Ancien historique inaccessible. Vérifiez le stockage du navigateur et réessayez.");
+    }), []);
+
+  useEffect(() => { void refreshLegacyImportCount(); }, [refreshLegacyImportCount]);
+
+  const importLegacy = async () => {
+    try {
+      await importLegacyHistory();
+      await syncRecords();
+      setLegacyImportCount(0);
+      setLegacyImportError(null);
+    } catch {
+      setLegacyImportError("L'import a échoué. Les anciennes analyses sont conservées ; réessayez.");
+    }
+  };
+
   const removeRecord = async (id: string) => {
-    await deleteAnalysis(id);
-    await syncRecords(currentRecord?.id === id ? null : currentRecord?.id);
+    const name = records.find((record) => record.id === id)?.imageName ?? "cette analyse";
+    if (!window.confirm(`Supprimer définitivement « ${name} » de l’historique ?`)) return;
+    setHistoryError(null);
+    try {
+      await deleteAnalysis(id);
+      await syncRecords(currentRecord?.id === id ? null : currentRecord?.id);
+    } catch {
+      setHistoryError("La suppression de l’analyse a échoué. Elle est conservée dans l’historique.");
+    }
   };
 
   const filteredRecords = useMemo(() => {
@@ -108,7 +141,8 @@ export function useWorkspaceHistory() {
     const classCounts: Record<string, number> = {};
 
     elements.forEach((_element, idx) => {
-      const finalClass = getWorkspaceElementClassName(currentRecord, idx);
+      const finalClass = getWorkspaceElementClassName(currentRecord, idx).trim();
+      if (!finalClass) return;
       classCounts[finalClass] = (classCounts[finalClass] || 0) + 1;
     });
 
@@ -148,6 +182,12 @@ export function useWorkspaceHistory() {
     filteredRecords,
     stats,
     storageLoading,
+    legacyImportCount,
+    legacyImportError,
+    historyError,
+    storageError,
+    importLegacy,
+    refreshLegacyImportCount,
     setFilter,
     setHistoryOpen,
     selectRecord,

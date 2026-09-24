@@ -37,6 +37,8 @@ let historyRecords: AnalysisRecord[] = [record387];
 let annotationRecord: AnalysisRecord | null = record387;
 
 vi.mock('../services/storage', () => ({
+  getLegacyImportCount: vi.fn(async () => 0),
+  importLegacyHistory: vi.fn(async () => 0),
   deleteAnalysis: vi.fn(async () => undefined),
   getAnalysisById: vi.fn(async () => annotationRecord),
   getHistory: vi.fn(async () => historyRecords),
@@ -45,6 +47,7 @@ vi.mock('../services/storage', () => ({
 }));
 
 vi.mock('../services/api', () => ({
+  adminAnnotationMediaUrl: (path: string) => path,
   getClasses: vi.fn(() => Promise.resolve({ num_classes: 1, class_names: ['atl'] })),
   getTrust: vi.fn(() => Promise.resolve(null)),
   saveAnnotation: vi.fn(),

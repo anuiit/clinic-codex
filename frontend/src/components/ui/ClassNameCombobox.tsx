@@ -189,6 +189,7 @@ export function ClassNameCombobox({
     if (event.key === "Escape") {
       setIsOpen(false);
       setInputValue(displayValue);
+      onInputChange?.(displayValue);
       return;
     }
     if (event.key === "Enter") {

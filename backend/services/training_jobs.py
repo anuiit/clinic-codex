@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - compatibility when backend dir is sys.
     from services.annotation_review import LOCAL_ONLY_WARNING, AnnotationReviewStore  # type: ignore
     from codex_pipeline.data.snapshot import live_annotation_usage  # type: ignore
 
-ALLOWED_JOB_FIELDS = {"dry_run", "device", "batch_size", "notes"}
+ALLOWED_JOB_FIELDS = {"dry_run", "device", "batch_size", "notes", "expected_data_revision"}
 DEFAULT_ALLOWED_DEVICES = ("auto", "cpu", "mps", "cuda")
 TERMINAL_STATUSES = {"succeeded", "failed", "disabled", "rejected"}
 LAUNCH_GUARD_STALE_SECONDS = 3600
@@ -399,6 +399,7 @@ class AdminTrainingService:
             "artifacts": self._artifacts(),
             "training_snapshot": snapshot,
             "latest_job": self.latest_job(),
+            "latest_training_job": self.latest_job(kind="training"),
         }
 
     def launch_allowed(
@@ -437,13 +438,15 @@ class AdminTrainingService:
             reasons.append(f"missing_retrain_script: {self.script_path}")
         return {"allowed": not reasons, "reasons": reasons}
 
-    def latest_job(self) -> dict[str, Any] | None:
+    def latest_job(self, *, kind: str | None = None) -> dict[str, Any] | None:
         if not self.runs_dir.exists():
             return None
         candidates = sorted(self.runs_dir.glob("*/status.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not candidates:
-            return None
-        return self._hydrate_job(candidates[0])
+        for path in candidates:
+            if kind and ((_read_json(path) or {}).get("kind") or "training") != kind:
+                continue
+            return self._hydrate_job(path)
+        return None
 
     def get_job(self, run_id: str) -> dict[str, Any] | None:
         if not run_id or "/" in run_id or "\\" in run_id or ".." in run_id:
@@ -460,12 +463,71 @@ class AdminTrainingService:
             snapshot = self._training_snapshot_info()
             if not snapshot["valid"]:
                 raise AdminTrainingForbiddenError("; ".join(snapshot["errors"]))
+            if request["expected_data_revision"] not in (None, snapshot.get("data_revision")):
+                raise AdminTrainingConflictError("Les données ou le modèle ont changé : vérifiez à nouveau.")
             latest = self.latest_job()
             if latest and latest.get("status") == "running":
                 raise AdminTrainingConflictError(f"training job already running: {latest.get('run_id')}")
             return self._start_job_unlocked(
                 request, snapshot=snapshot, actor_id=actor_id
             )
+
+    def models(self) -> dict[str, Any]:
+        versions = self.model_registry.read_index()["versions"]
+        return {"versions": sorted(
+            [{"version_id": key, "status": value.get("status"), "created_at": value.get("created_at")}
+             for key, value in versions.items() if value.get("status") == "candidate"],
+            key=lambda value: value.get("created_at") or "", reverse=True)}
+
+    def start_comparison(self, payload: dict, context: RequestLaunchContext, *, actor_id=None) -> dict:
+        if (not self.settings.enable_admin_training_jobs or self.settings.model_dir
+                or not is_loopback_address(context.remote_addr) or not is_loopback_address(context.host)
+                or not is_local_origin(context.origin)):
+            raise AdminTrainingForbiddenError("Comparaison locale désactivée ou requête non locale.")
+        if not isinstance(payload, dict) or set(payload) - {"version_id", "analysis_id"}:
+            raise AdminTrainingValidationError("expected version_id and optional analysis_id")
+        version = payload.get("version_id")
+        if (not isinstance(version, str) or
+                self.model_registry.read_index()["versions"].get(version, {}).get("status") != "candidate"):
+            raise AdminTrainingValidationError("an exact registered version_id is required")
+        try:
+            self.model_registry.resolve_runtime_package(version)
+        except (ValueError, OSError) as exc:
+            raise AdminTrainingValidationError(str(exc)) from exc
+        analysis_id = payload.get("analysis_id")
+        if analysis_id is not None:
+            if not isinstance(analysis_id, str):
+                raise AdminTrainingValidationError("analysis_id must be a string")
+            try:
+                self.review_store.image_path_for(analysis_id)
+            except Exception as exc:
+                raise AdminTrainingValidationError("analysis not found") from exc
+        with _atomic_launch_guard(self.runs_dir / ".launch.lock"):
+            latest = self.latest_job()
+            if latest and latest.get("status") == "running":
+                raise AdminTrainingConflictError("A training or comparison job is already running.")
+            return self._start_job_unlocked(
+                {"kind": "comparison", "version_id": version, "analysis_id": analysis_id,
+                 "dry_run": False, "device": "cpu", "batch_size": 16, "notes": ""},
+                snapshot={"snapshot_manifest_sha256": None, "paths": dict.fromkeys(("elements", "manifest", "metadata"), "")},
+                actor_id=actor_id)
+
+    def comparison_media(self, run_id: str, sample_id: str, *, source=False) -> Path | None:
+        if not run_id or any(char in run_id for char in ("/", "\\", "..")):
+            return None
+        run = self.runs_dir / run_id
+        report = _read_json(run / "comparison.json")
+        if report is None:
+            return None
+        row = next((item for item in report.get("rows", []) if item.get("sample_id") == sample_id), None)
+        if row is None:
+            return None
+        try:
+            path = (run / safe_relative_path(row["source_image_file" if source else "crop_file"])).resolve(strict=True)
+            path.relative_to(run.resolve())
+            return path if path.is_file() else None
+        except (OSError, ValueError, KeyError):
+            return None
 
     def _start_job_unlocked(
         self,
@@ -476,6 +538,8 @@ class AdminTrainingService:
     ) -> dict[str, Any]:
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
         model_version_id = self.model_registry.build_version_id(run_id=run_id.rsplit("-", 1)[-1])
+        if request.get("kind") == "comparison":
+            model_version_id = request["version_id"]
         candidate_version_dir = self.model_registry.version_dir(model_version_id)
         run_dir = self.runs_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
@@ -524,6 +588,18 @@ class AdminTrainingService:
                 "--version-id", model_version_id,
                 "--device", request["device"], "--batch-size", str(request["batch_size"]),
             ] + (["--dry-run"] if request["dry_run"] else [])
+            if snapshot.get("data_revision"):
+                command += ["--expected-data-revision", snapshot["data_revision"]]
+        if request.get("kind") == "comparison":
+            command = [sys.executable, str(self.repo_root / "scripts/compare_local_models.py"),
+                       "--backend-root", str(self.settings.backend_root),
+                       "--annotations-dir", str(self.review_store.annotations_dir),
+                       "--review-manifest", str(self.review_store.manifest_path),
+                       "--backbone-manifest", str(self.settings.admin_training_backbone_manifest_path),
+                       "--registry-dir", str(self.settings.model_registry_dir),
+                       "--version-id", model_version_id, "--output", str(run_dir / "comparison.json")]
+            if request.get("analysis_id"):
+                command += ["--analysis-id", request["analysis_id"]]
         env = {
             **{key: os.environ[key] for key in ("SystemRoot", "WINDIR", "TEMP", "TMP", "USERNAME", "USERPROFILE", "LOCALAPPDATA") if key in os.environ},
             "PATH": os.environ.get("PATH", ""),
@@ -537,6 +613,7 @@ class AdminTrainingService:
             "MODEL_REGISTRY_DIR": str(self.settings.model_registry_dir),
         }
         status = {
+            "kind": request.get("kind", "training"),
             "run_id": run_id,
             "model_version_id": model_version_id,
             "model_registry_dir": str(self.settings.model_registry_dir),
@@ -545,7 +622,8 @@ class AdminTrainingService:
             "status": "running",
             "local_only": True,
             "dry_run": request["dry_run"],
-            "training_mode": "local_prior" if self.local_prior_mode else "annotated_prototypes",
+            "training_mode": "comparison" if request.get("kind") == "comparison" else (
+                "local_prior" if self.local_prior_mode else "annotated_prototypes"),
             "device": request["device"],
             "batch_size": request["batch_size"],
             "notes": request["notes"],
@@ -617,7 +695,11 @@ class AdminTrainingService:
             raise AdminTrainingValidationError("notes must be a string")
         if len(notes) > 200:
             raise AdminTrainingValidationError("notes must be 200 characters or fewer")
-        return {"dry_run": dry_run, "device": device, "batch_size": batch_size, "notes": notes}
+        revision = payload.get("expected_data_revision")
+        if revision is not None and (not isinstance(revision, str) or len(revision) != 64):
+            raise AdminTrainingValidationError("expected_data_revision must be a SHA-256 revision")
+        return {"dry_run": dry_run, "device": device, "batch_size": batch_size, "notes": notes,
+                "expected_data_revision": revision}
 
     def _hydrate_job(self, status_path: Path) -> dict[str, Any] | None:
         status = _read_json(status_path)
@@ -659,7 +741,18 @@ class AdminTrainingService:
                     _write_json_atomic(status_path, status)
         log_path = Path(status.get("log_path") or status_path.parent / "train.log")
         status["log_tail"] = _tail_lines(log_path, self.settings.admin_training_log_tail_lines)
+        status["stage"] = next((line.removeprefix("Stage: ").strip()
+                                for line in reversed(status["log_tail"]) if line.startswith("Stage: ")), None)
         status["artifacts"] = self._artifacts()
+        if status.get("kind") == "comparison" and status.get("status") == "succeeded":
+            report = _read_json(status_path.parent / "comparison.json")
+            if report is None:
+                status.update(status="failed", error="Comparison report missing.")
+            else:
+                for row in report.get("rows", []):
+                    row["crop_url"] = f"/admin/training/jobs/{run_id}/samples/{row['sample_id']}"
+                    row["source_image_url"] = f"/admin/training/jobs/{run_id}/pages/{row['sample_id']}"
+                status["comparison"] = report
         if status.get("status") == "succeeded" and not status.get("dry_run") and status.get("training_mode") == "local_prior":
             version_id = status["model_version_id"]
             health = self._manifest_health(version_id)
@@ -761,6 +854,20 @@ class AdminTrainingService:
             }
             errors.extend(name for name, path in required.items() if not path.is_file())
             records = list(self.review_store.iter_approved_annotations())
+            if not errors:
+                from backend.services.training_catalogue import training_data_state
+                try:
+                    state = training_data_state(self.review_store, required["training_base_prior_missing"])
+                    errors.extend(state["errors"])
+                    info["data_revision"] = state["data_revision"]
+                    info["taxonomy_revision"] = state["revision"]
+                    info["new_classes"] = sorted(set(state["new_names"].values()) & {row["class_name"] for row in records})
+                except Exception as exc:
+                    # Malformed local artifacts should block launch, not break the admin page.
+                    errors.append("training_preflight_failed: " + str(exc))
+            if self.review_store.manifest_path.is_file() and not self.review_store.db_path.is_file():
+                errors.append('legacy_reviews_require_import: scripts/migrate_annotation_reviews.py '
+                              f'--annotations-dir "{self.review_store.annotations_dir}" --apply')
             count = len(records)
             info.update({
                 "mode": "local_prior", "configured": True, "valid": not errors,
@@ -859,26 +966,25 @@ class AdminTrainingService:
             ):
                 errors.append("training_snapshot_checksums_invalid")
 
-        review_sha = _sha256_file(self.review_store.manifest_path)
+        review_sha = self.review_store.review_manifest_sha256()
         sources = manifest.get("source_manifests")
         review_sources = (
             [
                 source
                 for source in sources
                 if isinstance(source, dict)
-                and source.get("kind") == "annotation-review-index.v1"
+                and source.get("kind") == "annotation-review-state.v1"
             ]
             if isinstance(sources, list)
             else []
         )
         empty_review_store = (
-            review_sha is None
+            not self.review_store.export_review_manifest()["decisions"]
             and not review_sources
             and info["live_annotation_count"] == 0
         )
         if not empty_review_store and (
-            review_sha is None
-            or not any(source.get("sha256") == review_sha for source in review_sources)
+            not any(source.get("sha256") == review_sha for source in review_sources)
         ):
             errors.append(
                 "training_snapshot_stale: rebuild it from the current approved annotations"

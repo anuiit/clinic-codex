@@ -39,14 +39,26 @@
       "importOwner": "pages/adminAnnotations/AdminHeader.tsx"
     },
     {
-      "selector": ".admin-live-dot",
+      "selector": ".admin-options",
       "ownerModule": "adminAnnotations/AdminHeader.module.css",
       "importOwner": "pages/adminAnnotations/AdminHeader.tsx"
     },
     {
-      "selector": ".admin-station-id",
+      "selector": ".admin-options-panel",
       "ownerModule": "adminAnnotations/AdminHeader.module.css",
       "importOwner": "pages/adminAnnotations/AdminHeader.tsx"
+    },
+    {
+      "selector": ".admin-live-dot",
+      "ownerModule": "adminAnnotations/AdminHeader.module.css",
+      "importOwner": "pages/adminAnnotations/AdminHeader.tsx",
+      "requiresRule": false
+    },
+    {
+      "selector": ".admin-station-id",
+      "ownerModule": "adminAnnotations/AdminHeader.module.css",
+      "importOwner": "pages/adminAnnotations/AdminHeader.tsx",
+      "requiresRule": false
     },
     {
       "selector": ".admin-timestamp",
@@ -56,7 +68,8 @@
     {
       "selector": ".admin-topstats",
       "ownerModule": "adminAnnotations/AdminHeader.module.css",
-      "importOwner": "pages/adminAnnotations/AdminHeader.tsx"
+      "importOwner": "pages/adminAnnotations/AdminHeader.tsx",
+      "requiresRule": false
     },
     {
       "selector": ".admin-audit-details",
@@ -247,11 +260,6 @@
       "importOwner": "pages/adminAnnotations/ReviewTab.tsx"
     },
     {
-      "selector": ".admin-decision-media__crop",
-      "ownerModule": "adminAnnotations/ReviewTab.module.css",
-      "importOwner": "pages/adminAnnotations/ReviewTab.tsx"
-    },
-    {
       "selector": ".admin-element-editor",
       "ownerModule": "adminAnnotations/ReviewEditor.module.css",
       "importOwner": "pages/adminAnnotations/ReviewEditor.tsx"
@@ -318,11 +326,6 @@
     },
     {
       "selector": ".admin-inspector-grid",
-      "ownerModule": "adminAnnotations/ReviewTab.module.css",
-      "importOwner": "pages/adminAnnotations/ReviewTab.tsx"
-    },
-    {
-      "selector": ".admin-key-hints",
       "ownerModule": "adminAnnotations/ReviewTab.module.css",
       "importOwner": "pages/adminAnnotations/ReviewTab.tsx"
     },

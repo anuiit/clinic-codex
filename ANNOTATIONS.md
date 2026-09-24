@@ -3,7 +3,7 @@
 This document describes the supported Clinic Codex loop:
 
 ```text
-browser annotation → submit validated elements → Admin Review tab → Dataset tab → Training tab/script → promote version → restart backend
+browser annotation → submit ready elements → Admin review → Dataset → verify → create candidate → compare (no activation)
 ```
 
 Only **admin-approved** submitted elements are eligible for retraining. Browser validation means "ready to submit for review"; it does not by itself make an element trainable.
@@ -18,9 +18,9 @@ Only **admin-approved** submitted elements are eligible for retraining. Browser 
 6. Click **Envoyer pour entraînement** or export from a localStorage dump with `scripts/export_annotations.py`; the backend saves those elements as **pending admin review**.
 7. Open `/admin/annotations` locally. Use **Review** to approve, reject, or correct class/bbox values; ordinary corrections return to pending unless you choose **Save & approve**.
 8. Use **Dataset** to inspect trainable approved crops, approved-but-not-trainable diagnostics, rejected items, and pending items before training.
-9. Build a cumulative snapshot from the existing corpus and current approvals, configure `ADMIN_TRAINING_SNAPSHOT_DIR`, then use **Training** for a dry run/full local warm-start run when `ENABLE_ADMIN_TRAINING_JOBS=1` is set. Full runs create a candidate version under `backend/model_registry/versions/<version_id>/`.
-10. Promote the candidate with `backend/.venv/bin/python scripts/promote_model.py <version_id>`.
-11. Restart the backend to use the promoted weights.
+9. In **Classes**, explicitly confirm any new class. Keep `ADMIN_TRAINING_SNAPSHOT_DIR` unset for the standard local workflow; current approvals are captured automatically.
+10. In **Entraîner**, verify preparation, then create a candidate. `ENABLE_ADMIN_TRAINING_JOBS=1` and the local pinned backbone are required; the installer prepares these. Candidates are stored under `backend/model_registry/versions/<version_id>/`.
+11. Compare the candidate against the active model. The local workflow never activates it; promotion remains blocked.
 
 ## 1. Annotate in the browser
 
@@ -102,19 +102,20 @@ The page calls backend local admin endpoints under `http://localhost:7117/admin/
 Important boundaries:
 
 - This route is **local/dev-only** and **not production-secured**. Do not expose it on a shared network as a real admin system.
-- There is no auth, role, token, or production authorization. The model registry/rollback layer is local JSON/filesystem safety tooling, not access control.
-- The Training tab is a guarded local wrapper around `scripts/retrain.sh`; it creates an immutable candidate version and is disabled by default. It must not be treated as production authorization.
+- Authentication, role permissions and CSRF checks protect admin operations when authentication is enabled. Local-origin/loopback guards still apply; these do not constitute an Internet deployment configuration.
+- The Training tab launches the allowlisted local Python runner on Windows and Linux; advanced snapshot mode uses the platform wrapper. Training requires `ENABLE_ADMIN_TRAINING_JOBS=1` and creates an immutable candidate, never activation.
 - Decisions are **element-level**. One analysis can contain approved, rejected, and pending elements at the same time.
-- The review manifest is stored at `backend/annotations/review-index.json`.
+- Reviews are stored transactionally in `backend/annotations/review-state.sqlite3`; do not edit it manually. [Import legacy JSON explicitly](docs/retraining-stability-delivery.md).
 - If a crop, metadata row, annotation folder, or source fingerprint is stale/missing, that element is not trainable even if an old manifest entry says approved.
 
 ### Review tab
 
 Use **Review** to compare the source image and element crop, then approve or reject each element. You can also correct the class name or bbox:
 
-- **Save changes** rewrites metadata/crop evidence and resets the element to `pending`.
-- **Save & approve** rewrites metadata/crop evidence and immediately records a fresh `approved` decision.
-- Any modification regenerates the crop from `image.png` and creates a fresh source fingerprint so stale approvals cannot silently remain trainable.
+- **Save changes** records corrected geometry/label and derived crop evidence, preserving the original submission, and resets the element to `pending`.
+- **Save & approve** records the correction with a fresh `approved` decision.
+- **Remettre à vérifier** revokes approval. History restoration creates a new pending revision, never silently reapproves an old one.
+- Mutations require the current revision. Concurrent edits return HTTP 409 rather than overwriting someone else's decision. Missing or changed source evidence invalidates approval.
 
 Backend API:
 
@@ -122,6 +123,8 @@ Backend API:
 GET  /admin/annotations
 POST /admin/annotations/<analysis_id>/<index>/review
 POST /admin/annotations/<analysis_id>/<index>/modify
+GET  /admin/annotations/<analysis_id>/<index>/history
+POST /admin/annotations/<analysis_id>/<index>/restore
 GET  /admin/annotations/<analysis_id>/image
 GET  /admin/annotations/<analysis_id>/<index>/crop
 ```
@@ -129,10 +132,10 @@ GET  /admin/annotations/<analysis_id>/<index>/crop
 Mutation payload:
 
 ```json
-{ "status": "approved" }
+{ "status": "approved", "expected_revision": 0 }
 ```
 
-Allowed statuses are `pending`, `approved`, and `rejected`; the UI exposes approve/reject actions.
+Allowed statuses are `pending`, `approved`, and `rejected`. Use the latest row's revision, not a fixed zero, when editing an existing decision.
 
 Modify payload:
 
@@ -140,7 +143,8 @@ Modify payload:
 {
   "class_name": "atl",
   "bbox": [120, 240, 80, 60],
-  "approve_after_save": false
+  "approve_after_save": false,
+  "expected_revision": 1
 }
 ```
 
@@ -148,7 +152,7 @@ Modify payload:
 
 ### Dataset tab
 
-Use **Dataset** as a read-only preflight view before training. It derives its rows from the same review queue and separates:
+Use **Dataset** to inspect rows from the same review queue before training. Open an item in triage to correct it or put it back into review. The view separates:
 
 - trainable approved crops;
 - approved rows excluded by diagnostics such as missing/stale crop evidence;
@@ -159,14 +163,16 @@ Filters and class distributions are UI-only helpers. The snapshot builder reads 
 
 ### Training tab
 
-The Training tab shows current approved counts, cumulative snapshot state, resolved paths, artifacts, and the latest job/log tail. Starting a run is intentionally disabled unless all launch guards pass:
+The Training tab presents one main action: verify preparation, create a candidate, then compare. Options and logs are expandable. Starting a run is disabled unless all launch guards pass:
 
 - set `ENABLE_ADMIN_TRAINING_JOBS=1` before starting the backend;
 - access the backend from a loopback client (`localhost`, `127.0.0.1`, or `::1`);
 - use a local `Host` header and local `Origin` header;
-- configure a valid `training-snapshot.v2` through `ADMIN_TRAINING_SNAPSHOT_DIR`;
-- keep its review-index hash current and provide the pinned backbone plus current projection;
-- keep `scripts/retrain.sh` present.
+- provide the compatible shipped prior/runtime and local pinned backbone;
+- approve usable examples and explicitly confirm any new classes;
+- launch against the current data revision, with no other training/comparison job running.
+
+Only the advanced corpus workflow sets `ADMIN_TRAINING_SNAPSHOT_DIR`; its `training-snapshot.v2` and canonical review-state digest must remain current. The standard local workflow needs no manually built snapshot.
 
 Launch payloads are limited to:
 
@@ -175,14 +181,15 @@ Launch payloads are limited to:
   "dry_run": true,
   "device": "auto",
   "batch_size": 16,
-  "notes": "optional short note"
+  "notes": "optional short note",
+  "expected_data_revision": "revision returned by the training summary"
 }
 ```
 
-Unknown fields, nonlocal requests, invalid devices, invalid batch sizes, stale snapshots, concurrent launch attempts, and concurrent running jobs are rejected. The backend starts only the allowlisted `bash scripts/retrain.sh` command with the configured snapshot, backbone pin, warm-start projection, and optional `--dry-run`. Job status/logs are written under `backend/training_runs/<run_id>/`, and the summary surfaces the snapshot hash, local registry aliases, and manifest/checksum health.
+Unknown fields, nonlocal requests, invalid devices, invalid batch sizes, stale data/snapshots and concurrent launches are rejected. Standard local mode starts `scripts/retrain_local.py` with the backend's Python interpreter on either platform. Job status/logs are written under `backend/training_runs/<run_id>/`. Data changes invalidate the UI's previous preparation check; the runner also rechecks evidence before publishing a candidate.
 If a backend restart leaves behind a `running` dry-run without its in-memory process handle, or a full run whose lock PID and recorded process identity cannot still confirm the original retrain process, the next job read marks it failed so a stale local status file does not permanently block the launcher.
 
-The browser Training tab launcher is Bash-only (`scripts/retrain.sh`). Native Windows users should use the PowerShell command-line path shown below unless they are running through WSL/Git Bash.
+The browser launcher supports native Windows and Linux. Advanced snapshot mode selects `scripts/retrain.ps1` on Windows or `scripts/retrain.sh` on Linux. Comparison executes identical captured crops with both models; see the [delivery guide](docs/retraining-stability-delivery.md) for evaluation limits.
 
 ## 4. Export from localStorage JSON
 
@@ -216,20 +223,21 @@ The standard local mode combines the **shipped model base and all current approv
 
 1. Upload and analyze an image, open its annotation editor, correct boxes and labels, and mark the desired elements ready.
 2. Send the annotations, then open **Admin → Review** and approve them.
-3. Open **Training**, run the dry run, then select **Non, entraînement complet** and launch.
-4. Inspect the candidate path and result in Training.
+3. In **Classes**, explicitly confirm any new label before learning it.
+4. In **Entraîner**, click **Vérifier la préparation**, then **Créer un candidat**.
+5. Open **Comparer les modèles** to inspect identical examples, source pages and metrics.
 
 Each run captures current approved crops and review decisions automatically. Exact duplicate images count once; conflicting labels for identical images are rejected. Stale decisions and missing crops are excluded. Repeating the same approvals does not count their contribution twice.
 
-The backbone and projection stay frozen. The update adapts prototypes for existing base-model classes; it does not train MobileSAM or introduce new classes. The original base provides the prior even when its training images are unavailable.
+The backbone and projection stay frozen. The update adapts existing prototypes and adds explicitly confirmed new classes with stable numeric IDs. It does not train MobileSAM. Every run rebuilds from the immutable shipped prior plus current approvals, so reruns do not compound previous candidates.
 
-Candidates are stored under `backend/model_registry/versions/<version_id>/`, with provenance and checksums. They are **not activated**; promotion is blocked because this local mode has no independent holdout. Reported base/candidate scores measure training-image fit, not better generalization. The running model is unchanged and no restart is needed.
+Candidates are stored under `backend/model_registry/versions/<version_id>/`, with provenance and checksums. They are **not activated** and promotion remains blocked. Source pages are reserved before fitting where enough examples exist. Reports separate training fit, reserved-page tests and new-class performance; independence from historical base training remains unknown. A tiny or absent holdout cannot establish generalization.
 
 ## FAQ
 
 ### Why does my new class not appear in predictions immediately?
 
-Creating a label stores annotation data. Local retraining supports only the existing model taxonomy. Candidate creation does not alter predictions.
+Creating a label stores annotation data. Confirm it in **Classes**, then approve usable examples to include it in a new candidate. Candidate creation never alters the active predictions.
 
 ### Why is an edited element draft again?
 

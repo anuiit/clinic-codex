@@ -139,7 +139,7 @@ def _prototype_contract(data: dict[str, Any], *, label: str) -> tuple[list[int],
 
 
 def _preserve_base_numeric_contract(
-    data: dict[str, Any], *, base_model_dir: Path | None
+    data: dict[str, Any], *, base_model_dir: Path | None, allow_new_classes: bool = False
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Reorder candidate rows to the active package's name-to-label contract.
 
@@ -158,14 +158,20 @@ def _preserve_base_numeric_contract(
     base_labels, base_names = _prototype_contract(base_data, label="base runtime")
     source_by_name = {source_names[label]: index for index, label in enumerate(source_labels)}
     base_by_name = {name: label for label, name in base_names.items()}
-    if set(source_by_name) != set(base_by_name):
+    added = set(source_by_name) - set(base_by_name)
+    if set(base_by_name) - set(source_by_name) or (added and not allow_new_classes):
         raise ValueError("candidate and base runtime taxonomies differ; cannot preserve numeric class labels")
-    ordered_names = [base_names[label] for label in base_labels]
+    extra_labels = [label for label in source_labels if source_names[label] in added]
+    if extra_labels and min(extra_labels) <= max(base_labels):
+        raise ValueError("new class labels must be above all historical base labels")
+    output_labels = base_labels + extra_labels
+    output_names = {**base_names, **{label: source_names[label] for label in extra_labels}}
+    ordered_names = [output_names[label] for label in output_labels]
     row_indices = [source_by_name[name] for name in ordered_names]
     rewritten = dict(data)
     rewritten["prototypes"] = data["prototypes"][row_indices].clone()
-    rewritten["class_labels"] = torch.tensor(base_labels, dtype=data["class_labels"].dtype)
-    rewritten["class_names"] = {label: base_names[label] for label in base_labels}
+    rewritten["class_labels"] = torch.tensor(output_labels, dtype=data["class_labels"].dtype)
+    rewritten["class_names"] = output_names
     return rewritten, {
         "base_package": str(base_model_dir.resolve()),
         "base_prototypes_path": str(base_path.resolve()),
@@ -196,6 +202,7 @@ def export_model(
     training_manifest_path: Path | None = None,
     checkpoint_selection: str | None = None,
     evaluate_candidate: bool = False,
+    allow_new_classes: bool = False,
 ) -> dict[str, Path]:
     if checkpoint_selection not in {None, "best", "latest"}:
         raise ValueError("checkpoint_selection must be 'best' or 'latest'")
@@ -251,6 +258,7 @@ def export_model(
     data, numeric_label_contract = _preserve_base_numeric_contract(
         data,
         base_model_dir=base_model_dir or runtime_model_dir,
+        allow_new_classes=allow_new_classes,
     )
 
     # -------------------------------------------------------- split and save

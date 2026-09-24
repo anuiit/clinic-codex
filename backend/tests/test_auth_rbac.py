@@ -278,7 +278,7 @@ def test_review_route_rejects_self_review_over_http(tmp_path):
         assert client.post("/save-annotation", json=payload, headers={"X-CSRF-Token": csrf}).status_code == 200
         response = client.post(
             "/admin/annotations/self-review-http/0/review",
-            json={"status": "approved"},
+            json={"status": "approved", "expected_revision": 0},
             headers={"Host": "localhost", "X-CSRF-Token": csrf},
         )
     assert response.status_code == 403
@@ -324,7 +324,7 @@ def test_local_initial_admin_self_review_is_scoped_and_audited(tmp_path, case, a
         [{"index": 0, "class_name": "atl", "bbox": [0, 0, 4, 4]}],
         settings.annotations_dir, settings.elements_dir, author_id=actor["id"],
     )
-    body = {"status": "approved"}
+    body = {"status": "approved", "expected_revision": 0}
     if action == "modify":
         body.update(class_name="calli", bbox=[1, 1, 4, 4])
     # A client-supplied permission must never enable the exception.

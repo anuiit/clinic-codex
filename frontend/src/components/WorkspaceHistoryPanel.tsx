@@ -136,50 +136,36 @@ export function WorkspaceHistoryPanel({
                 return (
                   <div
                     key={record.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onSelectRecord(record)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        onSelectRecord(record);
-                      }
-                    }}
                     className={`selection-card workspace-history-row group relative rounded-none transition-colors ${isActive ? 'selection-card--active before:absolute before:inset-y-2 before:left-0 before:w-1 before:rounded-none before:bg-[var(--accent)]' : 'ui-row--hover'}`}
                   >
                     <div className="flex items-start gap-3">
-                      <img src={record.imageDataUrl} alt={record.imageName} className="workspace-history-thumb h-16 w-16 rounded-none border border-[color:var(--border-subtle)] object-cover" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="ui-title-sm truncate">{record.imageName}</p>
-                            <p className="ui-text-meta mt-1">{new Date(record.timestamp).toLocaleDateString()} · {record.result.num_elements} {labels.elementsSuffix}</p>
+                      <button type="button" onClick={() => onSelectRecord(record)} className="flex min-w-0 flex-1 items-start gap-3 text-left">
+                        <img src={record.imageDataUrl} alt="" className="workspace-history-thumb h-16 w-16 rounded-none border border-[color:var(--border-subtle)] object-cover" />
+                        <div className="min-w-0 flex-1">
+                          <p className="ui-title-sm truncate">{record.imageName}</p>
+                          <p className="ui-text-meta mt-1">{new Date(record.timestamp).toLocaleDateString()} · {record.result.num_elements} {labels.elementsSuffix}</p>
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {badges.map((badge) => (
+                              <span key={badge} className="ui-chip ui-chip--accent">
+                                {badge}
+                              </span>
+                            ))}
+                            {record.result.elements.some((element) => element.rejected) && (
+                              <span className="ui-chip ui-chip--danger">
+                                {record.result.elements.filter((element) => element.rejected).length} {labels.rejectedSuffix}
+                              </span>
+                            )}
                           </div>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onRemoveRecord(record.id);
-                            }}
-                            className="workspace-history-delete rounded-none p-1.5 text-[color:var(--text-muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
-                            aria-label={`${labels.deleteLabel} ${record.imageName}`}
-                          >
-                            <Trash2 size={14} />
-                          </button>
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-1.5">
-                          {badges.map((badge) => (
-                            <span key={badge} className="ui-chip ui-chip--accent">
-                              {badge}
-                            </span>
-                          ))}
-                          {record.result.elements.some((element) => element.rejected) && (
-                            <span className="ui-chip ui-chip--danger">
-                              {record.result.elements.filter((element) => element.rejected).length} {labels.rejectedSuffix}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRemoveRecord(record.id)}
+                        className="workspace-history-delete rounded-none p-1.5 text-[color:var(--text-muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
+                        aria-label={`${labels.deleteLabel} ${record.imageName}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   </div>
                 );

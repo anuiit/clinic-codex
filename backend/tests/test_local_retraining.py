@@ -119,7 +119,7 @@ def test_capture_deduplicates_pixels_and_keeps_review_copy(tmp_path):
     store = approved_store(tmp_path)
     snapshot = local.capture_approvals(store, tmp_path / "snapshot", {2: "atl", 8: "calli"})
     assert (snapshot["approved_count"], snapshot["unique_count"], snapshot["duplicate_count"]) == (2, 1, 1)
-    assert (tmp_path / "snapshot/review-index.json").read_bytes() == store.manifest_path.read_bytes()
+    assert json.loads((tmp_path / "snapshot/review-index.json").read_text()) == store.export_review_manifest()
     store.set_status("approved-0", 0, "rejected")
     next_snapshot = local.capture_approvals(store, tmp_path / "next", {2: "atl", 8: "calli"})
     assert next_snapshot["approved_count"] == 1
@@ -205,12 +205,14 @@ def test_real_cpu_retraining_in_clean_checkout(tmp_path):
         "annotations": [{"index": 0, "class_name": name, "bbox": [0, 0, *size]}],
     }
     assert client.post("/save-annotation", json=payload, headers=headers).status_code == 200
-    assert client.post("/admin/annotations/fresh-user-annotation/0/review", json={"status": "approved"}, headers=headers).status_code == 200
+    assert client.post("/admin/annotations/fresh-user-annotation/0/review", json={"status": "approved", "expected_revision": 0}, headers=headers).status_code == 200
     summary = client.get("/admin/training/summary").get_json()
     assert summary["launch_allowed_for_request"], summary["launch_disabled_reasons"]
     protected = [settings.class_config_path, settings.classifier_weights_dir / "projection.pt",
-                 settings.classifier_weights_dir / "prototypes.pt", settings.annotations_dir / "review-index.json"]
+                 settings.classifier_weights_dir / "prototypes.pt"]
     hashes = {path: local.sha256_file(path) for path in protected}
+    store = AnnotationReviewStore(settings.annotations_dir)
+    review_hash = store.review_manifest_sha256()
     candidates = []
     for dry_run in (True, False, False):
         response = client.post("/admin/training/jobs", json={"dry_run": dry_run, "device": "cpu", "batch_size": 1}, headers=headers)
@@ -232,5 +234,6 @@ def test_real_cpu_retraining_in_clean_checkout(tmp_path):
             candidates.append(torch.load(version / "runtime/weights/prototypes.pt", weights_only=True))
     assert torch.equal(candidates[0]["prototypes"], candidates[1]["prototypes"])
     assert hashes == {path: local.sha256_file(path) for path in protected}
+    assert store.review_manifest_sha256() == review_hash
     print(f"FRESH_CLONE={clone}")
     print(json.dumps(job["result"]))

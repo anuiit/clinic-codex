@@ -52,6 +52,8 @@ export type UseAnnotationViewportOptions = {
   setHoveredIdx: Dispatch<SetStateAction<number | null>>;
   setNamingFocusToken: Dispatch<SetStateAction<number>>;
   loading: boolean;
+  initialFocusedIdx: number | null;
+  imageReady: boolean;
 };
 
 export function areBboxesEqual(

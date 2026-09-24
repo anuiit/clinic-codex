@@ -1,8 +1,8 @@
 export const messages = {
   fr: {
     workspace: {
-      appTitle: 'Analyseur de glyphes Codex',
-      uploadPrompt: 'Déposez une image de glyphe ici ou cliquez pour parcourir',
+      appTitle: 'Analyse',
+      uploadPrompt: 'Importer une image',
       uploadModalTitle: 'Image prête à analyser',
       uploadModalDescription: 'Vérifiez l’image déposée avant de lancer la segmentation.',
       analyze: 'Analyser',

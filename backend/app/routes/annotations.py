@@ -94,10 +94,10 @@ def save_annotation_route():
 
     try:
         actor = current_user()
-        if actor is None:
-            result = services.save_annotation(data["analysis_id"], image, data["annotations"])
-        else:
-            result = services.save_annotation(data["analysis_id"], image, data["annotations"], author_id=actor["id"])
+        options = {"author_id": actor["id"]} if actor is not None else {}
+        if "image_name" in data:
+            options["image_name"] = data["image_name"]
+        result = services.save_annotation(data["analysis_id"], image, data["annotations"], **options)
         return jsonify(result), 200
     except Exception as exc:  # Preserve Phase 0 storage/internal mappings.
         return annotation_error_response(exc)

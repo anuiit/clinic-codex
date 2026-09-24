@@ -4,7 +4,7 @@ import {
   LEGACY_STORAGE_KEY,
 } from '../../src/services/storageLegacy';
 
-const DB_NAME = 'clinic-codex-storage';
+const DB_NAME = 'clinic-codex-storage-account-local';
 const STORE_NAME = 'analysisRecords';
 
 type SeedRecord = { id: string } & Record<string, unknown>;

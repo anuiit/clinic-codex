@@ -1,16 +1,18 @@
 import styles from "./AdminHeader.module.css";
 import { useMemo } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import ThemeToggle from "../../components/ThemeToggle";
-import { ActionButton, PageTabs, WorkstationMark } from "../../components/ui/AdminPrimitives";
+import { ActionButton, PageTabs } from "../../components/ui/AdminPrimitives";
 import type { AdminAnnotationQueue } from "../../types";
 import { ADMIN_TABS, type AdminAnnotationsPageProps, type AdminTab, formatTimestamp } from "./model";
-import { QueueCounters } from "./shared";
 import { RuntimeVersionBadge } from "../../components/RuntimeVersionBadge";
 
 export function AdminHeader({
   themeMode = "dark",
   onToggleTheme,
   queue,
+  canReadQueue = true,
+  canReadTraining = true,
   refreshing,
   refreshDisabled,
   refreshDisabledReason,
@@ -19,6 +21,7 @@ export function AdminHeader({
   activeTab,
   onSelectTab,
   authSlot,
+  onReturnToAnalysis,
 }: AdminAnnotationsPageProps & {
   queue: AdminAnnotationQueue | null;
   refreshing: boolean;
@@ -27,28 +30,21 @@ export function AdminHeader({
   lastRefreshedAt: Date | null;
   onRefresh: () => void;
   activeTab: AdminTab;
+  onReturnToAnalysis: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
   onSelectTab: (tab: AdminTab) => void;
 }) {
   return (
-    <header className={`${styles.owner} admin-command-bar admin-chrome`}>
+    <header role="banner" className={`${styles.owner} admin-command-bar admin-chrome`}>
       <div className="admin-command-main">
         <div className="admin-command-title admin-brand">
-          <WorkstationMark />
-          <div>
-            <h1 className="text-base font-semibold tracking-tight text-[color:var(--text-heading)]">
-              Poste de triage
-            </h1>
-            <span className="admin-station-id">codex-014</span>
-          </div>
+          <h1 className="text-base font-semibold tracking-tight text-[color:var(--text-heading)]">Poste de triage</h1>
         </div>
-        <AdminTabs activeTab={activeTab} onSelect={onSelectTab} queue={queue} />
-        {queue ? <QueueCounters queue={queue} /> : null}
+        <AdminTabs activeTab={activeTab} onSelect={onSelectTab} queue={queue} canReadQueue={canReadQueue} canReadTraining={canReadTraining} />
         <div className="admin-command-actions">
-          <RuntimeVersionBadge />
+          <a href="/" onClick={onReturnToAnalysis} className="px-2 py-1 text-xs underline underline-offset-2">
+            Retour à l’analyse
+          </a>
           {authSlot}
-          <span className="admin-timestamp">
-            Actualisé {formatTimestamp(lastRefreshedAt)}
-          </span>
           <ActionButton
             tone="ghost"
             className="px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
@@ -58,13 +54,14 @@ export function AdminHeader({
           >
             {refreshing ? "Actualisation…" : "Actualiser"}
           </ActionButton>
-          {onToggleTheme ? (
-            <ThemeToggle
-              mode={themeMode}
-              onToggle={onToggleTheme}
-              className="shrink-0"
-            />
-          ) : null}
+          <details className="admin-options">
+            <summary>Options du poste</summary>
+            <div className="admin-options-panel">
+              <RuntimeVersionBadge />
+              <span className="admin-timestamp">Actualisé {formatTimestamp(lastRefreshedAt)}</span>
+              {onToggleTheme ? <ThemeToggle mode={themeMode} onToggle={onToggleTheme} className="shrink-0" /> : null}
+            </div>
+          </details>
         </div>
       </div>
     </header>
@@ -74,28 +71,34 @@ function AdminTabs({
   activeTab,
   onSelect,
   queue,
+  canReadQueue,
+  canReadTraining,
 }: {
   activeTab: AdminTab;
   onSelect: (tab: AdminTab) => void;
   queue: AdminAnnotationQueue | null;
+  canReadQueue: boolean;
+  canReadTraining: boolean;
 }) {
   const tabItems = useMemo(() => {
+    const availableTabs = ADMIN_TABS.filter((tab) =>
+      tab.id === "training" || tab.id === "compare" ? canReadTraining : canReadQueue);
     if (!queue) {
-      return ADMIN_TABS;
+      return availableTabs;
     }
     const reviewed = queue.counts.approved + queue.counts.rejected;
-    return ADMIN_TABS.map((tab) => ({
+    return availableTabs.map((tab) => ({
       ...tab,
       hint:
         tab.id === "review"
           ? `${reviewed}/${queue.counts.total}`
           : tab.id === "dataset"
             ? queue.counts.trainable
-            : queue.counts.trainable > 0
-              ? "prêt"
-              : "bloqué",
+            : tab.id === "classes" || tab.id === "compare"
+              ? undefined
+            : undefined,
     }));
-  }, [queue]);
+  }, [queue, canReadQueue, canReadTraining]);
   return (
     <PageTabs
       items={tabItems}

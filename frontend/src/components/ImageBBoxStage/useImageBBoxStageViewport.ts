@@ -123,6 +123,23 @@ export function useImageBBoxStageViewport({
   const zoomIn = useCallback(() => zoomBy(zoomStep), [zoomBy, zoomStep]);
   const zoomOut = useCallback(() => zoomBy(-zoomStep), [zoomBy, zoomStep]);
 
+  const focusBBox = useCallback((bbox: [number, number, number, number]) => {
+    const container = getContainerElement();
+    const stage = transformSize;
+    const [imageWidth, imageHeight] = imageSize ?? [];
+    if (!container || !stage || !imageWidth || !imageHeight || bbox[2] <= 0 || bbox[3] <= 0) return;
+    const rect = container.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const level = clampZoom(Math.max(1, Math.min(
+      rect.width * 0.6 / (bbox[2] * stage.width / imageWidth),
+      rect.height * 0.6 / (bbox[3] * stage.height / imageHeight),
+    )), zoomBounds);
+    const centerX = ((bbox[0] + bbox[2] / 2) / imageWidth - 0.5) * stage.width;
+    const centerY = ((bbox[1] + bbox[3] / 2) / imageHeight - 0.5) * stage.height;
+    setZoom(level);
+    setPanOffset(clampPan({ x: -centerX * level, y: -centerY * level }, level));
+  }, [clampPan, getContainerElement, imageSize, transformSize, zoomBounds]);
+
   const handleStageWheel = useCallback(
     (event: ReactWheelEvent<HTMLDivElement>) => {
       if (!shouldConsumeStageWheel(event.deltaY)) return;
@@ -219,6 +236,7 @@ export function useImageBBoxStageViewport({
     panOffset,
     isPanning,
     resetView,
+    focusBBox,
     applyZoom,
     zoomIn,
     zoomOut,

@@ -1,3 +1,61 @@
-/* Slice 4 owner module: adminAnnotations/AdminHeader.module.css. Transitional global selectors; see .omx/plans/slice-4-selector-ownership.json. */
-.owner{--admin-css-owner:header}
-:global(.admin-command-bar){position:relative;z-index:10;flex-shrink:0;border-bottom:1px solid var(--border-subtle);background:transparent;padding:0 1.35rem}:global(.admin-command-main){display:flex;flex-wrap:wrap;align-items:center;gap:0.4rem 1.1rem;min-height:3.5rem;min-width:0}:global(.admin-command-title),:global(.admin-command-actions){display:flex;min-width:0;align-items:center;gap:0.45rem}:global(.admin-command-title){flex:0 1 14rem}:global(.admin-brand){display:flex;align-items:center;gap:0.7rem}:global(.admin-brand-mark){width:1.38rem;height:1.38rem;display:grid;place-items:center;transform:rotate(45deg);border:1px solid var(--accent)}:global(.admin-brand-mark::before){content:"";width:0.38rem;height:0.38rem;background:var(--accent)}:global(.admin-station-id){color:var(--text-soft);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:0.72rem}:global(.admin-command-main>.ui-tabs-shell){flex:1 0 22rem;max-width:100%}:global(.admin-topstats){display:flex;align-items:center;gap:1rem;color:var(--text-soft);font-size:0.76rem;white-space:nowrap}:global(.admin-topstats strong){color:var(--text-heading);font-weight:700}:global(.admin-live-dot){width:0.45rem;height:0.45rem;display:inline-block;margin-right:0.35rem;border-radius:999px;background:var(--status-ready)}:global(.admin-command-actions){flex-wrap:wrap;margin-left:auto}:global(.admin-command-title h1){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}:global(.admin-command-actions){justify-content:flex-end}:global(.admin-timestamp){color:var(--text-soft);font-size:0.72rem;white-space:nowrap}:global(.admin-command-bar .ui-tab){height:3.5rem;padding:0 1.15rem;font-size:0.8rem}@media (max-width:760px){:global(.admin-command-actions){justify-content:flex-start;margin-left:0}:global(.admin-command-bar .ui-tab){padding:0 0.7rem}}
+/* Admin header: primary navigation stays visible; secondary status lives in Options. */
+.owner { --admin-css-owner: header; }
+:global(.admin-command-bar) {
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 1.35rem;
+}
+:global(.admin-command-main) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem 1rem;
+  min-height: 3.5rem;
+  min-width: 0;
+}
+:global(.admin-command-title), :global(.admin-command-actions) {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  min-width: 0;
+}
+:global(.admin-command-title) { flex: 0 0 auto; }
+:global(.admin-brand) { gap: .7rem; }
+:global(.admin-brand-mark) {
+  display: grid;
+  place-items: center;
+  width: 1.38rem;
+  height: 1.38rem;
+  transform: rotate(45deg);
+  border: 1px solid var(--accent);
+}
+:global(.admin-brand-mark::before) { content: ""; width: .38rem; height: .38rem; background: var(--accent); }
+:global(.admin-command-title h1) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:global(.admin-command-main > .ui-tabs-shell) { flex: 1 1 23rem; max-width: 100%; }
+:global(.admin-command-bar .ui-tab) { height: 3.5rem; padding: 0 1rem; font-size: .8rem; }
+:global(.admin-command-actions) { flex-wrap: nowrap; justify-content: flex-end; margin-left: auto; }
+:global(.admin-timestamp) { color: var(--text-soft); font-size: .72rem; white-space: nowrap; }
+:global(.admin-options) { position: relative; }
+:global(.admin-options > summary) { cursor: pointer; white-space: nowrap; font-size: .78rem; color: var(--text-soft); }
+:global(.admin-options-panel) {
+  position: absolute;
+  top: calc(100% + .7rem);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: .75rem;
+  min-width: 13rem;
+  padding: 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: .5rem;
+  background: var(--surface-strong);
+  box-shadow: 0 .5rem 1.5rem color-mix(in srgb, var(--text-main) 15%, transparent);
+}
+@media (max-width: 760px) {
+  :global(.admin-command-main) { gap: .35rem .7rem; padding: .4rem 0; }
+  :global(.admin-command-main > .ui-tabs-shell) { order: 3; flex-basis: 100%; overflow-x: auto; }
+  :global(.admin-command-actions) { margin-left: auto; }
+  :global(.admin-command-bar .ui-tab) { padding: 0 .7rem; }
+}

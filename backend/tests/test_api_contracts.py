@@ -75,7 +75,7 @@ class ContractServices:
             raise self.decode_exc
         return decode_image_data_url(data_url)
 
-    def save_annotation(self, analysis_id, image, annotations):
+    def save_annotation(self, analysis_id, image, annotations, *, image_name=None):
         if self.save_exc:
             raise self.save_exc
         return {

@@ -18,8 +18,8 @@ function estimatedImageSize(
 ): [number, number] {
   return analysis.elements.reduce<[number, number]>(
     ([maxX, maxY], element) => [
-      Math.max(maxX, element.bbox[0] + element.bbox[2]),
-      Math.max(maxY, element.bbox[1] + element.bbox[3]),
+      Math.max(maxX, (element.bbox[0] ?? 0) + (element.bbox[2] ?? 0)),
+      Math.max(maxY, (element.bbox[1] ?? 0) + (element.bbox[3] ?? 0)),
     ],
     [1, 1],
   );

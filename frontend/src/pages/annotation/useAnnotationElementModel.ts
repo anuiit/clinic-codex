@@ -22,6 +22,7 @@ type UseAnnotationElementModelOptions = {
   setCustomClasses: Dispatch<SetStateAction<string[]>>;
   focusedIdx: number | null;
   cardRefs: MutableRefObject<Array<HTMLElement | null>>;
+  listReady?: boolean;
 };
 
 export function useAnnotationElementModel({
@@ -33,6 +34,7 @@ export function useAnnotationElementModel({
   setCustomClasses,
   focusedIdx,
   cardRefs,
+  listReady = true,
 }: UseAnnotationElementModelOptions) {
   const [statusFilter, setStatusFilter] =
     useState<AnnotationStatusFilter>("all");
@@ -139,9 +141,10 @@ export function useAnnotationElementModel({
     });
 
   useEffect(() => {
-    if (focusedIdx === null) return;
-    cardRefs.current[focusedIdx]?.scrollIntoView?.({ block: "nearest" });
-  }, [cardRefs, focusedIdx, elements.length]);
+    if (!listReady || focusedIdx === null) return;
+    const frame = requestAnimationFrame(() => cardRefs.current[focusedIdx]?.scrollIntoView?.({ block: "nearest" }));
+    return () => cancelAnimationFrame(frame);
+  }, [cardRefs, focusedIdx, elements.length, listReady]);
 
   return {
     statusFilter,

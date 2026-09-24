@@ -9,3 +9,20 @@
 :global(.class-list-reference){overscroll-behavior:contain}
 :global(.tile-reference){border:0}
 :global(.tile-reference.selected){box-shadow:inset 0 0 0 1px var(--accent)}
+:global(.gallery-reference){grid-auto-rows:max-content}
+
+/* Keep the class list and gallery in their own bounded scroll regions on desktop. */
+@media (min-width:761px){
+  :global(.admin-tab-content:has(.admin-dataset-reference-shell)){overflow:hidden}
+  :global(.admin-dataset-reference-shell){grid-template-rows:2.9rem minmax(0,1fr);overflow:hidden}
+  :global(.dataset-shell-reference){grid-template-rows:minmax(0,1fr);overflow:hidden}
+  :global(.classes-reference),:global(.gallery-area-reference){min-height:0;overflow:hidden}
+  :global(.classes-reference){grid-template-rows:auto minmax(0,1fr)}
+  :global(.gallery-area-reference){grid-template-rows:auto auto minmax(0,1fr)}
+}
+@media (max-width:760px){
+  :global(.admin-dataset-reference-shell){height:auto;grid-template-rows:auto auto}
+  :global(.dataset-shell-reference){display:block}
+  :global(.classes-reference){border-right:0;border-bottom:1px solid var(--border-subtle)}
+  :global(.class-list-reference){max-height:12rem}
+}

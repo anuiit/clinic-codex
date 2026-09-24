@@ -71,3 +71,40 @@ def start_admin_training_job():
     except AdminTrainingConflictError as exc:
         return _error(str(exc), 409)
     return jsonify({"status": "ok", "local_only": True, "job": job}), 202
+
+
+@bp.get("/admin/training/models")
+@require_local_request
+@require_permission("training.read")
+def get_comparable_models():
+    return jsonify(_services().admin_training_service().models())
+
+
+@bp.post("/admin/training/comparisons")
+@require_local_request
+@require_permission("training.run")
+@require_csrf
+def start_model_comparison():
+    try:
+        actor = current_user()
+        job = _services().admin_training_service().start_comparison(
+            request.get_json(silent=True), _request_context(), actor_id=actor["id"] if actor else None)
+    except AdminTrainingForbiddenError as exc:
+        return _error(str(exc), 403)
+    except AdminTrainingValidationError as exc:
+        return _error(str(exc), 400)
+    except AdminTrainingConflictError as exc:
+        return _error(str(exc), 409)
+    return jsonify({"status": "ok", "local_only": True, "job": job}), 202
+
+
+@bp.get("/admin/training/jobs/<run_id>/samples/<sample_id>")
+@bp.get("/admin/training/jobs/<run_id>/pages/<sample_id>", defaults={"source": True})
+@require_local_request
+@require_permission("training.read")
+def comparison_image(run_id: str, sample_id: str, source=False):
+    from backend.app.routes.admin_annotations import _private_media
+    path = _services().admin_training_service().comparison_media(run_id, sample_id, source=source)
+    if path is None:
+        return _error("comparison sample not found", 404)
+    return _private_media(path)

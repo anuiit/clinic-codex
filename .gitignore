@@ -85,6 +85,7 @@ build/
 # Ignore storage and generated backend folders but keep .gitkeep placeholders
 backend/annotations/
 !backend/annotations/.gitkeep
+backend/annotations-backup-*.tar.gz
 backend/training_data/
 !backend/training_data/.gitkeep
 backend/precomputed/

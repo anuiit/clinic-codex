@@ -63,7 +63,7 @@ def _write_training_snapshot(settings: Settings) -> None:
     (snapshot_dir / "Elements").mkdir(parents=True, exist_ok=True)
     metadata_path = snapshot_dir / "metadata.csv"
     metadata_path.write_text("image_path,element_name,class_label\n", encoding="utf-8")
-    review_hash = training_jobs._sha256_file(settings.annotations_dir / "review-index.json")
+    review_hash = training_jobs.AnnotationReviewStore(settings.annotations_dir).review_manifest_sha256()
     rows = []
     for item in training_jobs.AnnotationReviewStore(
         settings.annotations_dir
@@ -115,8 +115,8 @@ def _write_training_snapshot(settings: Settings) -> None:
         "source_manifests": (
             [
                 {
-                    "kind": "annotation-review-index.v1",
-                    "path": str(settings.annotations_dir / "review-index.json"),
+                    "kind": "annotation-review-state.v1",
+                    "path": str(settings.annotations_dir),
                     "sha256": review_hash,
                 }
             ]
@@ -182,16 +182,29 @@ def _client(settings):
 
 def _approve_one(client, analysis_id: str = "training-ready-1"):
     assert client.post("/save-annotation", json=_payload(analysis_id)).status_code == 200
-    assert client.post(f"/admin/annotations/{analysis_id}/0/review", json={"status": "approved"}).status_code == 200
+    assert client.post(f"/admin/annotations/{analysis_id}/0/review", json={"status": "approved", "expected_revision": 0}).status_code == 200
     settings = client.application.extensions["clinic_services"].settings
     _write_training_snapshot(settings)
+
+
+def test_corrupt_review_database_blocks_summary_and_launch_without_recreating_it(tmp_path):
+    settings = _settings(tmp_path, enabled=True)
+    _app, client = _client(settings)
+    path = settings.annotations_dir / "review-state.sqlite3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"corrupt database sentinel")
+    for response in (client.get("/admin/training/summary"),
+                     client.post("/admin/training/jobs", json={"dry_run": True})):
+        assert response.status_code == 503
+        assert response.get_json()["error_code"] == "DATABASE_UNAVAILABLE"
+    assert path.read_bytes() == b"corrupt database sentinel"
 
 
 def test_training_summary_is_visible_but_launch_disabled_by_default(tmp_path):
     settings = _settings(tmp_path, enabled=False)
     _app, client = _client(settings)
     assert client.post("/save-annotation", json=_payload("training-summary-1")).status_code == 200
-    assert client.post("/admin/annotations/training-summary-1/0/review", json={"status": "approved"}).status_code == 200
+    assert client.post("/admin/annotations/training-summary-1/0/review", json={"status": "approved", "expected_revision": 0}).status_code == 200
 
     resp = client.get("/admin/training/summary")
 
@@ -238,6 +251,25 @@ def test_training_summary_enabled_loopback_allows_launch(tmp_path):
     assert body["training_snapshot"]["valid"] is True
 
 
+def test_training_summary_keeps_latest_training_after_comparison(tmp_path):
+    settings = _settings(tmp_path, enabled=False)
+    runs_dir = settings.admin_training_runs_dir
+    for index, kind in enumerate(("training", "comparison")):
+        run_dir = runs_dir / kind
+        run_dir.mkdir(parents=True)
+        (run_dir / "status.json").write_text(json.dumps({
+            "run_id": kind, "kind": kind, "status": "succeeded", "dry_run": True,
+        }), encoding="utf-8")
+        if kind == "comparison":
+            (run_dir / "comparison.json").write_text('{"rows": []}', encoding="utf-8")
+        os.utime(run_dir / "status.json", (1000 + index, 1000 + index))
+
+    _app, client = _client(settings)
+    body = client.get("/admin/training/summary").get_json()
+    assert body["latest_job"]["run_id"] == "comparison"
+    assert body["latest_training_job"]["run_id"] == "training"
+
+
 def test_training_rejects_annotations_present_only_in_holdout(tmp_path):
     settings = _settings(tmp_path, enabled=True)
     _app, client = _client(settings)
@@ -262,7 +294,7 @@ def test_training_summary_blocks_a_snapshot_older_than_current_reviews(tmp_path)
     assert (
         client.post(
             "/admin/annotations/training-stale-snapshot/0/review",
-            json={"status": "approved"},
+            json={"status": "approved", "expected_revision": 0},
         ).status_code
         == 200
     )
@@ -455,6 +487,14 @@ def test_admin_route_inventory_has_explicit_local_only_policy(tmp_path):
     }
 
     assert admin_rules == {
+        ("GET", "/admin/classes", "classes.get_admin_classes"),
+        ("POST", "/admin/classes", "classes.confirm_admin_class"),
+        ("GET", "/admin/annotations/<analysis_id>/<int:index>/history", "admin_annotations.get_admin_annotation_history"),
+        ("POST", "/admin/annotations/<analysis_id>/<int:index>/restore", "admin_annotations.restore_admin_annotation_element"),
+        ("GET", "/admin/training/models", "admin_training.get_comparable_models"),
+        ("POST", "/admin/training/comparisons", "admin_training.start_model_comparison"),
+        ("GET", "/admin/training/jobs/<run_id>/samples/<sample_id>", "admin_training.comparison_image"),
+        ("GET", "/admin/training/jobs/<run_id>/pages/<sample_id>", "admin_training.comparison_image"),
         ("GET", "/admin/annotations", "admin_annotations.list_admin_annotations"),
         ("GET", "/admin/annotations/<analysis_id>/image", "admin_annotations.get_admin_annotation_image"),
         ("GET", "/admin/annotations/<analysis_id>/<int:index>/crop", "admin_annotations.get_admin_annotation_crop"),

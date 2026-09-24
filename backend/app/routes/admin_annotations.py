@@ -3,6 +3,8 @@ from __future__ import annotations
 from flask import Blueprint, current_app, jsonify, request, send_file
 
 from backend.services.annotation_review import (
+    AnnotationReviewConflictError,
+    AnnotationReviewMigrationRequiredError,
     AnnotationReviewNotFoundError,
     AnnotationReviewValidationError,
 )
@@ -16,8 +18,36 @@ def _services():
     return current_app.extensions["clinic_services"]
 
 
-def _error(message: str, status_code: int):
-    return jsonify({"status": "error", "error": message}), status_code
+def _error(message: str, status_code: int, error_code: str | None = None):
+    body = {"status": "error", "error": message}
+    if error_code:
+        body["error_code"] = error_code
+    return jsonify(body), status_code
+
+
+def _conflict(exc: AnnotationReviewConflictError):
+    return _error(
+        str(exc), 409,
+        "REVIEW_MIGRATION_REQUIRED" if isinstance(exc, AnnotationReviewMigrationRequiredError) else None,
+    )
+
+
+def _expected_revision(data: dict):
+    value = data.get("expected_revision")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise AnnotationReviewConflictError("expected_revision is required; reload the annotation and retry")
+    return value
+
+
+def _private_media(path):
+    from PIL import Image
+    # Captured comparison media deliberately has no user-controlled extension.
+    with Image.open(path) as image:
+        mimetype = Image.MIME.get(image.format)
+    response = send_file(path, conditional=True, mimetype=mimetype)
+    response.cache_control.private = True
+    response.cache_control.no_cache = True
+    return response
 
 
 def _review_actor() -> dict:
@@ -52,7 +82,7 @@ def list_admin_annotations():
 @require_permission("annotation.queue.read")
 def get_admin_annotation_image(analysis_id: str):
     try:
-        return send_file(_services().annotation_review_image_path(analysis_id))
+        return _private_media(_services().annotation_review_image_path(analysis_id))
     except AnnotationReviewValidationError as exc:
         return _error(str(exc), 400)
     except AnnotationReviewNotFoundError as exc:
@@ -64,7 +94,7 @@ def get_admin_annotation_image(analysis_id: str):
 @require_permission("annotation.queue.read")
 def get_admin_annotation_crop(analysis_id: str, index: int):
     try:
-        return send_file(_services().annotation_review_crop_path(analysis_id, index))
+        return _private_media(_services().annotation_review_crop_path(analysis_id, index))
     except AnnotationReviewValidationError as exc:
         return _error(str(exc), 400)
     except AnnotationReviewNotFoundError as exc:
@@ -77,7 +107,7 @@ def get_admin_annotation_crop(analysis_id: str, index: int):
 @require_csrf
 def set_admin_annotation_review(analysis_id: str, index: int):
     data = request.get_json(silent=True)
-    if data is None:
+    if not isinstance(data, dict):
         return _error("invalid JSON", 400)
 
     status = data.get("status")
@@ -85,7 +115,9 @@ def set_admin_annotation_review(analysis_id: str, index: int):
         return _error("missing field: status", 400)
 
     try:
-        result = _services().set_annotation_review_status(analysis_id, index, status, **_review_actor())
+        result = _services().set_annotation_review_status(analysis_id, index, status, expected_revision=_expected_revision(data), **_review_actor())
+    except AnnotationReviewConflictError as exc:
+        return _conflict(exc)
     except AnnotationReviewValidationError as exc:
         return _error(str(exc), 403 if str(exc) == "self-review is not permitted" else 400)
     except AnnotationReviewNotFoundError as exc:
@@ -100,7 +132,7 @@ def set_admin_annotation_review(analysis_id: str, index: int):
 @require_csrf
 def modify_admin_annotation_element(analysis_id: str, index: int):
     data = request.get_json(silent=True)
-    if data is None:
+    if not isinstance(data, dict):
         return _error("invalid JSON", 400)
 
     class_name = data.get("class_name")
@@ -125,11 +157,54 @@ def modify_admin_annotation_element(analysis_id: str, index: int):
             class_name=class_name,
             bbox=bbox,
             status=status,
+            expected_revision=_expected_revision(data),
+            **({"note": data.get("note"), "note_present": True} if "note" in data else {}),
             **_review_actor(),
         )
+    except AnnotationReviewConflictError as exc:
+        return _conflict(exc)
     except AnnotationReviewValidationError as exc:
         return _error(str(exc), 403 if str(exc) == "self-review is not permitted" else 400)
     except AnnotationReviewNotFoundError as exc:
         return _error(str(exc), 404)
 
+    return jsonify(result), 200
+
+
+@bp.get("/admin/annotations/<analysis_id>/<int:index>/history")
+@require_local_request
+@require_permission("annotation.queue.read")
+def get_admin_annotation_history(analysis_id: str, index: int):
+    try:
+        return jsonify(_services().annotation_review_history(analysis_id, index)), 200
+    except AnnotationReviewValidationError as exc:
+        return _error(str(exc), 400)
+    except AnnotationReviewNotFoundError as exc:
+        return _error(str(exc), 404)
+    except AnnotationReviewConflictError as exc:
+        return _conflict(exc)
+
+
+@bp.post("/admin/annotations/<analysis_id>/<int:index>/restore")
+@require_local_request
+@require_permission("annotation.review")
+@require_csrf
+def restore_admin_annotation_element(analysis_id: str, index: int):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _error("invalid JSON", 400)
+    target = data.get("target_revision")
+    if isinstance(target, bool) or not isinstance(target, int) or target < 0:
+        return _error("target_revision must be a non-negative integer", 400)
+    try:
+        result = _services().restore_annotation_review_element(
+            analysis_id, index, target_revision=target,
+            expected_revision=_expected_revision(data), **_review_actor(),
+        )
+    except AnnotationReviewConflictError as exc:
+        return _conflict(exc)
+    except AnnotationReviewValidationError as exc:
+        return _error(str(exc), 403 if str(exc) == "self-review is not permitted" else 400)
+    except AnnotationReviewNotFoundError as exc:
+        return _error(str(exc), 404)
     return jsonify(result), 200

@@ -134,6 +134,7 @@ export interface SaveAnnotationResponse {
 
 export type SaveAnnotationErrorCode =
   | 'VALIDATION_ERROR'
+  | 'ANNOTATION_CONFLICT'
   | 'PERMISSION_DENIED'
   | 'DISK_FULL'
   | 'STORAGE_ERROR'
@@ -173,6 +174,7 @@ export interface AdminAnnotationCounts {
 
 export interface AdminAnnotationElement {
   key: string;
+  revision: number;
   analysis_id: string;
   index: number;
   class_name: string;
@@ -191,6 +193,7 @@ export interface AdminAnnotationElement {
 
 export interface AdminAnnotationAnalysis {
   analysis_id: string;
+  image_name?: string | null;
   uploaded_at?: string;
   image_path: string;
   image_url: string;
@@ -203,6 +206,7 @@ export interface AdminAnnotationQueue {
   schema_version: number;
   local_only: boolean;
   warning: string;
+  review_store?: { mode: 'sqlite' | 'legacy_readonly' | 'empty'; legacy_decisions: number };
   counts: AdminAnnotationCounts;
   analyses: AdminAnnotationAnalysis[];
   diagnostics: AdminAnnotationDiagnostic[];
@@ -219,8 +223,76 @@ export interface AdminAnnotationMutationResponse {
 export interface AdminAnnotationModifyPayload {
   class_name: string;
   bbox: [number, number, number, number];
+  expected_revision: number;
+  note?: string | null;
   approve_after_save?: boolean;
   status?: AdminAnnotationReviewStatus;
+}
+
+export interface AdminAnnotationHistory {
+  revision: number;
+  history: Array<{
+    revision: number;
+    action: string;
+    status: AdminAnnotationReviewStatus;
+    class_name: string;
+    bbox: number[];
+    note?: string | null;
+    reviewed_at?: string;
+    reviewed_by?: string | null;
+  }>;
+}
+
+export interface AdminClassCatalogue {
+  revision: string;
+  classes: Array<{
+    class_name: string;
+    class_label: number | null;
+    status: 'active' | 'candidate' | 'unconfirmed';
+    counts: { pending: number; approved: number; rejected: number };
+    trainable_count: number;
+  }>;
+}
+
+export interface AdminModelComparison {
+  candidate_version_id: string;
+  sample_count: number;
+  warnings: string[];
+  protocol: {
+    evaluation_scope: string;
+    metrics_scope: string;
+    base_historical_independence: string;
+    device: string;
+    latency_scope?: string;
+  };
+  metrics: {
+    common: { support: number; base_correct: number; candidate_correct: number; gains: number; regressions: number; unchanged: number; both_wrong: number };
+    new_classes: { support: number; candidate_correct: number };
+    coverage: { base: number; candidate: number };
+    latency_ms: { base: number; candidate: number };
+    by_scope: Record<string, Omit<AdminModelComparison['metrics'], 'by_scope' | 'latency_ms'>>;
+    top3: { base_correct: number; candidate_correct: number };
+    per_class: Record<string, { support: number; base_correct: number; candidate_correct: number; base_top3: number; candidate_top3: number }>;
+  };
+  rows: Array<{
+    sample_id: string;
+    analysis_id: string;
+    index: number;
+    image_name: string | null;
+    bbox: number[];
+      source_image_size?: [number, number] | null;
+      source_image_sha256?: string;
+      scope: 'train' | 'locked_test' | 'ad_hoc';
+      review_status?: 'approved' | 'pending' | 'rejected' | null;
+      candidate_exposure?: 'train' | 'locked_test' | 'unseen_exact' | 'unknown';
+    expected_class: string | null;
+    base_supported: boolean;
+    base: ClassifyResult;
+    candidate: ClassifyResult;
+    outcome: 'gain' | 'regression' | 'both_wrong' | 'unchanged' | 'new_class' | 'disagreement';
+    crop_url: string;
+    source_image_url: string;
+  }>;
 }
 
 export interface AdminTrainingFileInfo {
@@ -233,6 +305,9 @@ export interface AdminTrainingFileInfo {
 
 export interface AdminTrainingJob {
   run_id: string;
+  kind?: 'training' | 'comparison';
+  stage?: string;
+  comparison?: AdminModelComparison;
   model_version_id?: string;
   candidate_version_dir?: string;
   error?: string;
@@ -243,6 +318,8 @@ export interface AdminTrainingJob {
     base_correct: number;
     active_correct: number;
     candidate_correct: number;
+    train_count?: number;
+    holdout?: { support: number; base_correct: number; candidate_correct: number };
     generalization_validated: false;
   };
   status: 'running' | 'succeeded' | 'failed' | 'disabled' | 'rejected';
@@ -267,6 +344,8 @@ export interface AdminTrainingJob {
 }
 
 export interface AdminTrainingSnapshot {
+  data_revision?: string;
+  new_classes?: string[];
   mode?: 'local_prior';
   configured: boolean;
   valid: boolean;
@@ -316,6 +395,7 @@ export interface AdminTrainingSummary {
   artifacts: Record<string, unknown>;
   training_snapshot: AdminTrainingSnapshot;
   latest_job?: AdminTrainingJob | null;
+  latest_training_job?: AdminTrainingJob | null;
 }
 
 export interface AdminTrainingJobResponse {
@@ -326,6 +406,7 @@ export interface AdminTrainingJobResponse {
 
 export interface AdminTrainingStartPayload {
   dry_run: boolean;
+  expected_data_revision?: string;
   device: string;
   batch_size: number;
   notes?: string;

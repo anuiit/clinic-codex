@@ -1,12 +1,26 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { ActionButton, AdminSection, PillButton, StatusPill, type BadgeTone, type ButtonTone } from './AdminPrimitives';
+import { ActionButton, AdminSection, PageTabs, PillButton, StatusPill, type BadgeTone, type ButtonTone } from './AdminPrimitives';
 
 function classOf(label: string) {
   return screen.getByText(label).getAttribute('class') ?? '';
 }
 
 describe('admin UI primitives', () => {
+  it('moves keyboard focus with the selected admin tab', async () => {
+    function Tabs() {
+      const [active, setActive] = useState<'one' | 'two'>('one');
+      return <PageTabs items={[{ id: 'one', label: 'Un' }, { id: 'two', label: 'Deux' }]} activeId={active} onSelect={setActive} ariaLabel="Sections" panelIdPrefix="test" />;
+    }
+    render(<Tabs />);
+    const first = screen.getByRole('tab', { name: 'Un' });
+    first.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: 'Deux' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: 'Deux' })).toHaveAttribute('aria-selected', 'true');
+  });
   it('renders all button variants with distinct neutral and ghost classes', () => {
     const tones: ButtonTone[] = ['primary', 'neutral', 'danger', 'ghost', 'ready'];
     render(
@@ -30,13 +44,17 @@ describe('admin UI primitives', () => {
     render(
       <>
         <PillButton active>Active</PillButton>
-        <PillButton>Inactive</PillButton>
+        <PillButton active={false}>Inactive</PillButton>
+        <PillButton>Action</PillButton>
       </>,
     );
 
     const active = classOf('Active');
     const inactive = classOf('Inactive');
     expect(active).not.toEqual(inactive);
+    expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Inactive' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Action' })).not.toHaveAttribute('aria-pressed');
     expect(`${active} ${inactive}`).not.toContain('pill-reference');
   });
 

@@ -103,6 +103,8 @@ let drawImageMock = vi.fn();
 let clearRectMock = vi.fn();
 
 vi.mock('../services/storage', () => ({
+  getLegacyImportCount: vi.fn(async () => 0),
+  importLegacyHistory: vi.fn(async () => 0),
   deleteAnalysis: vi.fn(async (id: string) => {
     historyRecords = historyRecords.filter((record) => record.id !== id);
   }),
@@ -113,12 +115,13 @@ vi.mock('../services/storage', () => ({
 }));
 
 vi.mock('../services/api', () => ({
+  adminAnnotationMediaUrl: (path: string) => path,
   getTrust: vi.fn(() => Promise.resolve(TRUST_RESULT)),
   segmentGlyph: vi.fn(() => Promise.resolve(SEGMENT_RESULT)),
 }));
 
 import { getTrust, segmentGlyph } from '../services/api';
-import { deleteAnalysis, saveAnalysis } from '../services/storage';
+import { deleteAnalysis, getHistory, getLegacyImportCount, saveAnalysis } from '../services/storage';
 
 function cloneRecords(records: AnalysisRecord[]) {
   return structuredClone(records) as AnalysisRecord[];
@@ -127,6 +130,11 @@ function cloneRecords(records: AnalysisRecord[]) {
 function AnnotationHandoffProbe() {
   const location = useLocation();
   return <div>annotation handoff {location.pathname}{location.search}</div>;
+}
+
+function WorkspaceLocationProbe() {
+  const location = useLocation();
+  return <output data-testid="workspace-location">{location.pathname}{location.search}</output>;
 }
 
 function renderPage(initialRecords = RECORDS, initialEntry = '/') {
@@ -204,8 +212,42 @@ describe('WorkspacePage interaction coverage', () => {
     vi.stubGlobal('crypto', { randomUUID: () => 'new-analysis-id' });
   });
 
+  it('keeps a deep-linked analysis selected when history contains another image', async () => {
+    historyRecords = cloneRecords(RECORDS);
+    render(
+      <MemoryRouter initialEntries={['/?analysis=beta-run']}>
+        <WorkspaceLocationProbe />
+        <WorkspacePage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId('workspace-image-header-meta');
+    expect(screen.getByTestId('workspace-location')).toHaveTextContent('/?analysis=beta-run');
+    expect(screen.getByTestId('workspace-image-header')).toHaveTextContent('beta.png');
+  });
+
+  it('uses a compact text-only header while keeping import and options accessible', async () => {
+    renderPage();
+    await screen.findByTestId('workspace-image-header');
+
+    const header = screen.getByRole('banner');
+    expect(within(header).getByRole('heading', { name: 'Analyse' })).toBeInTheDocument();
+    expect(within(header).getByRole('button', { name: 'Importer une image' })).toBeInTheDocument();
+    expect(header.querySelector('.app-header__icon')).not.toBeInTheDocument();
+    expect(screen.queryByText('Essayer avec 3 images du corpus')).not.toBeInTheDocument();
+  });
+
+  it('offers retry when the old history cannot be checked', async () => {
+    vi.mocked(getLegacyImportCount).mockRejectedValueOnce(new Error('old database blocked')).mockResolvedValueOnce(1);
+    renderPage([]);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/ancien historique inaccessible/i);
+    await userEvent.click(screen.getByRole('button', { name: /réessayer l'import/i }));
+    expect(await screen.findByRole('button', { name: /importer dans mon compte/i })).toBeInTheDocument();
+  });
+
   it('filters history results, selects a matching run, and deletes the active run', async () => {
     const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderPage();
     await waitForWorkspaceHistory();
 
@@ -222,6 +264,30 @@ describe('WorkspacePage interaction coverage', () => {
     expect(deleteAnalysis).toHaveBeenCalledWith('beta-run');
     expect(screen.queryByText('beta.png')).not.toBeInTheDocument();
     expect(screen.getByText('Aucun résultat ne correspond au filtre.')).toBeInTheDocument();
+  });
+
+  it('keeps the analysis visible and explains when history deletion fails', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(deleteAnalysis).mockRejectedValueOnce(new Error('storage unavailable'));
+    renderPage();
+    await waitForWorkspaceHistory();
+    await user.click(screen.getByTitle('Déplier l’historique'));
+
+    await user.click(screen.getByLabelText('Supprimer alpha.png'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/suppression.*échoué/i);
+    expect(screen.getAllByText('alpha.png').length).toBeGreaterThan(0);
+  });
+
+  it('reports a storage read failure instead of claiming history is empty, then retries', async () => {
+    vi.mocked(getHistory).mockRejectedValueOnce(new Error('IndexedDB unavailable'));
+    renderPage([]);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/stockage local indisponible/i);
+    historyRecords = cloneRecords(RECORDS);
+    await userEvent.click(screen.getByRole('button', { name: /réessayer l'historique/i }));
+    expect(await screen.findByTestId('workspace-image-header')).toHaveTextContent('alpha.png');
+    expect(screen.queryByText(/stockage local indisponible/i)).not.toBeInTheDocument();
   });
 
   it('reflects AnnotationPage-saved element edits and validation status instead of stale legacy annotations', async () => {
@@ -247,7 +313,7 @@ describe('WorkspacePage interaction coverage', () => {
     await screen.findByTestId('workspace-image-header-meta');
 
     expect(screen.getByTestId('workspace-image-header-meta')).toHaveTextContent(
-      'Annotés / rejetés 1/2 · 1',
+      '1/2 annotés · 1 rejetés',
     );
     expect(screen.getByRole('button', { name: /edited aleph région 0/i })).toBeInTheDocument();
     expect(screen.queryByText(/stale legacy aleph/i)).not.toBeInTheDocument();
@@ -463,8 +529,9 @@ describe('WorkspacePage interaction coverage', () => {
     expect(annotateAction).toHaveClass('workspace-annotate-action');
     expect(annotateAction).not.toHaveClass('ui-action-primary');
     expect(screen.getByTestId('workspace-image-header-meta')).toHaveTextContent('800×600');
-    expect(screen.getByTestId('workspace-image-header-meta')).toHaveTextContent('Annotés / rejetés 1/2 · 1');
+    expect(screen.getByTestId('workspace-image-header-meta')).toHaveTextContent('1/2 annotés · 1 rejetés');
     expect(screen.getByTestId('workspace-image-header-meta')).toHaveTextContent('Classes');
+    expect(screen.getByTestId('workspace-image-header-meta')).not.toHaveTextContent('alpha.png');
 
     const panel = screen.getByTestId('workspace-detected-panel');
     expect(within(panel).queryByRole('button', { name: 'Annoter l’analyse' })).not.toBeInTheDocument();
@@ -516,7 +583,7 @@ describe('WorkspacePage interaction coverage', () => {
 
     const activeRow = within(screen.getByTestId('workspace-history-list'))
       .getByText('alpha.png')
-      .closest('[role="button"]') as HTMLElement;
+      .closest('.workspace-history-row') as HTMLElement;
     expect(activeRow).toHaveClass('selection-card--active');
     expect(activeRow).not.toHaveClass('border', 'shadow-[0_0_0_1px_rgba(245,158,11,0.25)]');
   });
@@ -695,6 +762,22 @@ describe('WorkspacePage interaction coverage', () => {
     expect(screen.getAllByText('glyph.png').length).toBeGreaterThanOrEqual(1);
   });
 
+  it('explains when the browser cannot read the selected image', async () => {
+    const reader = vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (this: FileReader) {
+      queueMicrotask(() => this.dispatchEvent(new Event('error')));
+    });
+    try {
+      const user = userEvent.setup();
+      const { container } = renderPage([]);
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(fileInput, new File(['glyph pixels'], 'unreadable.png', { type: 'image/png' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(/lecture de l'image impossible/i);
+      expect(screen.queryByRole('dialog', { name: 'unreadable.png' })).not.toBeInTheDocument();
+    } finally {
+      reader.mockRestore();
+    }
+  });
+
   it('opens the upload preview, cancels cleanly, and analyzes the selected image', async () => {
     const user = userEvent.setup();
     const { container } = renderPage([]);
@@ -705,8 +788,8 @@ describe('WorkspacePage interaction coverage', () => {
     expect(await screen.findByText('Image prête à analyser')).toBeInTheDocument();
     expect(screen.getAllByText('glyph.png').length).toBeGreaterThanOrEqual(1);
 
-    const dialog = screen.getByText('Image prête à analyser').closest('div')?.parentElement as HTMLElement;
-    await user.click(within(dialog).getAllByRole('button', { name: 'Annuler' })[0]);
+    const dialog = screen.getByRole('dialog', { name: 'glyph.png' });
+    await user.click(within(dialog).getByRole('button', { name: 'Annuler' }));
     expect(screen.queryByText('Image prête à analyser')).not.toBeInTheDocument();
 
     await user.upload(fileInput, file);
@@ -722,5 +805,27 @@ describe('WorkspacePage interaction coverage', () => {
     }));
     await waitFor(() => expect(screen.queryByText('Image prête à analyser')).not.toBeInTheDocument());
     expect(screen.getAllByText('glyph.png').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('runs a real analysis for a shipped example and saves it to history', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      blob: async () => new Blob(['example pixels'], { type: 'image/jpeg' }),
+    })));
+    renderPage([]);
+
+    await user.click(screen.getByText('Essayer avec 3 images du corpus'));
+    await user.click(screen.getByRole('button', { name: 'Analyser l\'exemple 033_02_01-7.jpg' }));
+
+    await waitFor(() => expect(segmentGlyph).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '033_02_01-7.jpg' }),
+    ));
+    expect(saveAnalysis).toHaveBeenCalledWith(expect.objectContaining({
+      imageName: '033_02_01-7.jpg',
+      result: SEGMENT_RESULT,
+    }));
+    expect((await screen.findAllByText('033_02_01-7.jpg')).length).toBeGreaterThan(0);
+    vi.unstubAllGlobals();
   });
 });

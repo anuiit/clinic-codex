@@ -27,12 +27,28 @@ export function useWorkspaceUpload({
     setError(null);
 
     const reader = new FileReader();
+    const readError = () => {
+      if (currentFileRef.current !== nextFile) return;
+      currentFileRef.current = null;
+      setFile(null);
+      setPreview(null);
+      setError("Lecture de l'image impossible.");
+      if (inputRef.current) inputRef.current.value = "";
+    };
     reader.onload = (event) => {
       if (currentFileRef.current === nextFile) {
-        setPreview(event.target?.result as string);
+        const result = event.target?.result;
+        if (typeof result === "string") setPreview(result);
+        else readError();
       }
     };
-    reader.readAsDataURL(nextFile);
+    reader.onerror = readError;
+    reader.onabort = readError;
+    try {
+      reader.readAsDataURL(nextFile);
+    } catch {
+      readError();
+    }
   }, []);
 
   const clearPendingFile = useCallback(() => {
@@ -57,28 +73,50 @@ export function useWorkspaceUpload({
     [handleFile],
   );
 
-  const analyze = async () => {
-    if (!file || !preview) {
-      return;
-    }
+  const saveAnalyzedFile = async (source: File, imageDataUrl: string) => {
+    const result = await segmentGlyph(source);
+    const record: AnalysisRecord = {
+      id: crypto.randomUUID(),
+      imageName: source.name,
+      imageDataUrl,
+      timestamp: Date.now(),
+      result,
+      annotations: {},
+    };
+    await saveAnalysis(record);
+    await syncRecords(record.id);
+  };
 
+  const analyze = async () => {
+    if (!file || !preview) return;
     setLoading(true);
     setError(null);
-
     try {
-      const result = await segmentGlyph(file);
-      const record: AnalysisRecord = {
-        id: crypto.randomUUID(),
-        imageName: file.name,
-        imageDataUrl: preview,
-        timestamp: Date.now(),
-        result,
-        annotations: {},
-      };
-
-      await saveAnalysis(record);
-      await syncRecords(record.id);
+      await saveAnalyzedFile(file, preview);
       clearPendingFile();
+    } catch (issue) {
+      setError(issue instanceof Error ? issue.message : apiErrorLabel);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const analyzeExample = async (url: string, name: string) => {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Image d'exemple indisponible.");
+      const blob = await response.blob();
+      const exampleFile = new File([blob], name, { type: blob.type || "image/jpeg" });
+      const imageDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Lecture de l'image impossible."));
+        reader.readAsDataURL(exampleFile);
+      });
+      await saveAnalyzedFile(exampleFile, imageDataUrl);
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : apiErrorLabel);
     } finally {
@@ -98,5 +136,6 @@ export function useWorkspaceUpload({
     clearPendingFile,
     onDrop,
     analyze,
+    analyzeExample,
   };
 }

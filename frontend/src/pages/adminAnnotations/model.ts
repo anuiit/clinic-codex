@@ -2,13 +2,20 @@ import type { ThemeMode } from "../../components/ThemeToggle";
 import type { AdminAnnotationAnalysis, AdminAnnotationElement, AdminAnnotationQueue, AdminAnnotationReviewStatus, AdminDatasetSplit } from "../../types";
 import type { ReactNode } from "react";
 
-export type AdminTab = "review" | "dataset" | "training";
+export type AdminTab = "review" | "dataset" | "classes" | "training" | "compare";
 
 export type AdminAnnotationsPageProps = {
+  canReadQueue?: boolean;
+  canReadTraining?: boolean;
+  canRunTraining?: boolean;
+  guardRouteTransitions?: boolean;
+  canReview?: boolean;
   themeMode?: ThemeMode;
   onToggleTheme?: () => void;
   initialTab?: AdminTab;
   onNavigateTab?: (tab: AdminTab) => void;
+  onCompareCandidate?: (versionId: string) => void;
+  comparisonVersionId?: string;
   authSlot?: ReactNode;
 };
 
@@ -25,10 +32,20 @@ export const ADMIN_TABS: Array<{ id: AdminTab; label: string; description: strin
       description: "Comprendre ce qui est prêt ou bloqué pour l'entraînement.",
     },
     {
+      id: "classes",
+      label: "Classes",
+      description: "Voir les classes existantes et confirmer les nouvelles.",
+    },
+    {
       id: "training",
       label: "Entraîner",
       description:
         "Lancer prudemment un essai local à partir des éléments prêts.",
+    },
+    {
+      id: "compare",
+      label: "Comparer",
+      description: "Comparer les prédictions du candidat au modèle actif.",
     },
   ];
 
@@ -46,7 +63,7 @@ export const STATUS_TONE: Record<AdminAnnotationReviewStatus, "warning" | "ready
 
 
 export function formatBbox(bbox: number[]) {
-  return bbox.join(", ");
+  return bbox.length === 4 ? bbox.join(", ") : "à corriger";
 }
 
 export function formatTimestamp(value: Date | null) {
@@ -92,7 +109,6 @@ export function reviewRows(queue: AdminAnnotationQueue): ReviewRow[] {
   const diagnosticsByKey = diagnosticsByElementKey(queue);
   return queue.analyses.flatMap((analysis) =>
     analysis.elements
-      .filter((element) => element.review_status !== "approved")
       .map((element) => ({
         analysis,
         element,
@@ -143,6 +159,7 @@ export type TrainableDatasetSplit = Exclude<AdminDatasetSplit, "excluded">;
 export type DatasetSplitFilter = TrainableDatasetSplit | "all";
 
 export type DatasetRow = {
+  analysis: AdminAnnotationAnalysis;
   element: AdminAnnotationElement;
   bucket: DatasetBucket;
   diagnostics: string[];
@@ -189,6 +206,7 @@ export function datasetRows(queue: AdminAnnotationQueue): DatasetRow[] {
         (element) => element.trainable && element.dataset_split !== "excluded",
       )
       .map((element) => ({
+        analysis,
         element,
         bucket: datasetBucketFor(element),
         diagnostics: diagnosticsByKey.get(element.key) ?? [],
