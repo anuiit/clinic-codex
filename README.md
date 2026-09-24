@@ -103,7 +103,7 @@ The standard local mode combines the **shipped model base and all current approv
 4. In **Entraîner**, click **Vérifier la préparation**, then **Créer un candidat**.
 5. Open **Comparer les modèles** to inspect identical examples, source pages and metrics.
 
-Each run captures current approved crops and review decisions automatically. Exact duplicate images count once; conflicting labels for identical images are rejected. Stale decisions and missing crops are excluded. Repeating the same approvals does not count their contribution twice.
+Each run captures current approved crops and review decisions automatically. Exact duplicate images count once; pixel-identical crops with conflicting labels are excluded from that candidate and recorded for manual review without changing the source annotations. Stale decisions and missing crops are excluded. Repeating the same approvals does not count their contribution twice.
 
 The backbone and projection stay frozen. The update adapts existing prototypes and adds explicitly confirmed new classes with stable numeric IDs. It does not train MobileSAM. Every run rebuilds from the immutable shipped prior plus current approvals, so reruns do not compound previous candidates.
 

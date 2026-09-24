@@ -127,7 +127,9 @@ def capture_approvals(store: AnnotationReviewStore, destination: Path, names: di
             "source_group": "image-pixels:" + page_pixels, "source_kind": "live_annotation",
             "source_id": source_id, "row_id": canonical_json_sha([source_id, pixel_hash]),
         })
-    selected, duplicates, _, groups = _deduplicate_and_group(rows, exclude_conflicts=False)
+    selected, duplicates, conflicts, groups = _deduplicate_and_group(rows, exclude_conflicts=True)
+    if not selected:
+        raise ValueError("no non-conflicting approved annotations remain for training")
     selected, assignments, components = assign_splits(
         selected, groups, parent_assignments={}, salt="local-page-holdout.v1",
         dev_fraction=0.0, test_fraction=0.2, min_train_rows_per_class=1,
@@ -145,6 +147,11 @@ def capture_approvals(store: AnnotationReviewStore, destination: Path, names: di
         "review_index_sha256": sha256_file(destination / "review-index.json"),
         "approved_count": len(records), "unique_count": len(selected),
         "duplicate_count": len(duplicates), "rows": selected, "duplicates": duplicates,
+        "conflict_count": sum(len(cluster["rows"]) for cluster in conflicts),
+        "conflicts": [{"source_pixel_sha256": cluster["source_pixel_sha256"],
+                       "class_names": cluster["class_names"],
+                       "source_ids": [row["source_id"] for row in cluster["rows"]]}
+                      for cluster in conflicts],
         "source_group_assignments": assignments, "components": components,
         "holdout_count": holdout_count, "train_count": len(selected) - holdout_count,
         "evaluation_scope": "page_holdout" if holdout_count else "training_fit_only_no_holdout",
@@ -251,6 +258,7 @@ def create_candidate(args) -> dict:
             "base_historical_independence": "unknown", "approved_count": snapshot["approved_count"],
             "unique_count": snapshot["unique_count"], "train_count": len(labels), "holdout_count": len(holdout_indices),
             "duplicate_count": snapshot["duplicate_count"],
+            "conflict_count": snapshot["conflict_count"],
             "updated_classes": sorted({state["names"][label] for label in labels}),
             "new_classes": sorted(new_names.values()), "taxonomy_revision": state["revision"],
             "data_revision": state["data_revision"],
@@ -275,6 +283,7 @@ def create_candidate(args) -> dict:
             "training": {"mode": "local_prior", "projection_frozen": True, "preprocessing": PREPROCESSING_VERSION},
             "data": {"approved_count": snapshot["approved_count"], "train_count": len(labels),
                      "unique_count": snapshot["unique_count"], "holdout_count": len(holdout_indices),
+                     "conflict_count": snapshot["conflict_count"],
                      "taxonomy_revision": state["revision"], "data_revision": state["data_revision"]},
             "metrics": report,
             "promotion": {"blocked": True, "reason": "Candidate only; evaluation does not authorize activation."},

@@ -127,8 +127,24 @@ def test_capture_deduplicates_pixels_and_keeps_review_copy(tmp_path):
 
 def test_capture_refuses_conflicting_pixels(tmp_path):
     store = approved_store(tmp_path, "calli")
-    with pytest.raises(ValueError, match="conflicting"):
+    with pytest.raises(ValueError, match="non-conflicting"):
         local.capture_approvals(store, tmp_path / "snapshot", {2: "atl", 8: "calli"})
+
+
+def test_capture_excludes_conflicts_but_preserves_reviews(tmp_path):
+    store = approved_store(tmp_path, "calli")
+    save_annotation("distinct", Image.new("RGB", (24, 24), "blue"),
+                    [{"index": 0, "class_name": "atl", "bbox": [0, 0, 24, 24]}],
+                    base_dir=store.annotations_dir, elements_dir=tmp_path / "elements")
+    store.set_status("distinct", 0, "approved")
+    before = store.export_review_manifest()
+    snapshot = local.capture_approvals(store, tmp_path / "snapshot", {2: "atl", 8: "calli"})
+    assert snapshot["approved_count"] == 3
+    assert snapshot["unique_count"] == 1
+    assert snapshot["conflict_count"] == 2
+    assert {row for cluster in snapshot["conflicts"] for row in cluster["source_ids"]} == {
+        "approved-0:0", "approved-1:0"}
+    assert store.export_review_manifest() == before
 
 
 def test_capture_refuses_review_mutation(tmp_path, monkeypatch):

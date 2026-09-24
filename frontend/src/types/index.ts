@@ -314,6 +314,7 @@ export interface AdminTrainingJob {
   result?: {
     unique_count: number;
     duplicate_count: number;
+    conflict_count?: number;
     updated_classes: string[];
     base_correct: number;
     active_correct: number;

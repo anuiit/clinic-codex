@@ -99,8 +99,9 @@ export function TrainingJobPanel({ job }: { job: AdminTrainingJob | null }) {
       {job.result ? (
         <section aria-label="Résultat du candidat" className="mt-3">
           <h4 className="ui-title-sm">Candidat créé — non activé</h4>
-          <p>{job.result.unique_count} images uniques, {job.result.duplicate_count} doublons ignorés ; {job.result.updated_classes.length} classes mises à jour.</p>
-          <p>Sur les images apprises : base {job.result.base_correct}/{job.result.unique_count}, candidat {job.result.candidate_correct}/{job.result.unique_count}.</p>
+          <p>{job.result.unique_count} images uniques · {job.result.duplicate_count} doublons et {job.result.conflict_count ?? 0} annotations contradictoires exclus · {job.result.updated_classes.length} classes mises à jour.</p>
+          <p>Sur les {job.result.train_count ?? job.result.unique_count} images apprises : base {job.result.base_correct}/{job.result.train_count ?? job.result.unique_count}, candidat {job.result.candidate_correct}/{job.result.train_count ?? job.result.unique_count}.</p>
+          {job.result.holdout?.support ? <p>Sur {job.result.holdout.support} images réservées : actif {job.result.holdout.base_correct}/{job.result.holdout.support}, candidat {job.result.holdout.candidate_correct}/{job.result.holdout.support}.</p> : null}
           <p className="ui-alert ui-alert--accent p-2">Diagnostic d'apprentissage uniquement : aucune amélioration sur de nouvelles images n'est démontrée.</p>
           <p>Version : <code>{job.model_version_id}</code></p>
           <p>Fichiers locaux : <code>{job.candidate_version_dir}</code></p>
@@ -136,7 +137,7 @@ export function TrainingConsole({
   return (
     <section className="admin-training-console" aria-label="Console d'entraînement">
       <div><span className={summary.training_snapshot.valid ? "ok" : "warn"}>{summary.training_snapshot.valid ? "✓" : "!"}</span> {summary.training_snapshot.mode === "local_prior" ? "Capture automatique au lancement" : "Snapshot cumulatif"} : {summary.training_snapshot.row_count ?? "—"} images</div>
-      <div><span className={summary.training_snapshot.live_train_count ? "ok" : "warn"}>{summary.training_snapshot.live_train_count ? "✓" : "!"}</span> projection conservée · {summary.training_snapshot.live_train_count ?? "—"} validations utilisées pour les prototypes</div>
+      <div><span className={summary.training_snapshot.live_train_count ? "ok" : "warn"}>{summary.training_snapshot.live_train_count ? "✓" : "!"}</span> projection conservée · {summary.training_snapshot.live_train_count ?? "—"} validations disponibles avant dédoublonnage et réservation</div>
       {split ? <div><span className="ok">✓</span> split locked: train {split.train} · dev {split.dev} · locked test {split.locked_test}</div> : null}
       {summary.data.pending > 0 ? <div><span className="warn">!</span> {summary.data.pending} images restent à vérifier</div> : null}
       <div><span className="run">→</span> {job?.status === "running" ? "training run active" : summary.launch_allowed_for_request ? "ready to train" : "lancement bloqué"}</div>
@@ -146,7 +147,7 @@ export function TrainingConsole({
 
 export function LossMetricPreview({ job }: { job: AdminTrainingJob | null }) {
   return (
-    <MetricPane label="Images apprises" value={job?.result?.unique_count ?? "—"} testId="LossMetricPreview">
+    <MetricPane label="Images apprises" value={job?.result?.train_count ?? job?.result?.unique_count ?? "—"} testId="LossMetricPreview">
       <p className="ui-text-caption p-3">Projection figée : aucune courbe de perte d'optimisation.</p>
     </MetricPane>
   );

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -14,6 +15,7 @@ from backend.services.annotation_review import (
     AnnotationReviewNotFoundError,
     AnnotationReviewConflictError,
     AnnotationReviewStore,
+    _legacy_source_fingerprint,
 )
 from backend.services.annotation_storage import AnnotationConflictError, save_annotation
 
@@ -393,3 +395,30 @@ def test_legacy_import_normalizes_decimal_bboxes_and_quarantines_unusable_ones(t
     imported = store.export_review_manifest()["decisions"]
     assert imported["legacy-boxes:1"]["bbox"] == [1, 2, 4, 4]
     assert "legacy-boxes:2" not in imported
+
+
+def test_legacy_import_survives_moving_annotations_between_computers(tmp_path):
+    source = tmp_path / "original" / "annotations"
+    _save(source, "moved-page", count=1)
+    metadata = json.loads((source / "moved-page" / "metadata.json").read_text())
+    crop = source / "moved-page" / "elements" / "0.png"
+    old_fingerprint = _legacy_source_fingerprint(
+        analysis_id="moved-page", uploaded_at=metadata["uploaded_at"],
+        annotation=metadata["annotations"][0], crop_path=crop,
+    )
+    (source / "review-index.json").write_text(json.dumps({"schema_version": 1, "decisions": {
+        "moved-page:0": {"analysis_id": "moved-page", "index": 0, "status": "approved",
+                         "source_fingerprint": old_fingerprint, "class_name": "class-0",
+                         "bbox": [0.2, 0, 4, 4], "reviewed_at": "2026-01-01T00:00:00+00:00"}
+    }}))
+    imported = tmp_path / "new-pc" / "annotations"
+    shutil.copytree(source, imported)
+    original_metadata = (imported / "moved-page" / "metadata.json").read_bytes()
+    store = AnnotationReviewStore(imported)
+    assert store.import_legacy_manifest()["importable_decisions"] == 1
+    assert store.list_queue()["counts"]["trainable"] == 1
+    assert (imported / "moved-page" / "metadata.json").read_bytes() == original_metadata
+
+    moved_again = tmp_path / "another-pc" / "annotations"
+    shutil.copytree(imported, moved_again)
+    assert AnnotationReviewStore(moved_again).list_queue()["counts"]["trainable"] == 1

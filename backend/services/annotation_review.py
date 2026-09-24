@@ -178,10 +178,21 @@ def _source_fingerprint(
         "uploaded_at": uploaded_at,
         "class_name": annotation.get("class_name"),
         "bbox": annotation.get("bbox"),
-        "crop": _path_payload(crop_path),
+        "crop": {"exists": crop_path.is_file(), "sha256": _file_sha256(crop_path) if crop_path.is_file() else None},
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _legacy_source_fingerprint(*, analysis_id: str, uploaded_at: str | None,
+                               annotation: dict[str, Any], crop_path: Path) -> str:
+    """Recognize decisions written before fingerprints became path-independent."""
+    payload = {
+        "analysis_id": analysis_id, "index": annotation.get("index"),
+        "uploaded_at": uploaded_at, "class_name": annotation.get("class_name"),
+        "bbox": annotation.get("bbox"), "crop": _path_payload(crop_path),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _dataset_split_for_key(key: str) -> str:
@@ -312,9 +323,8 @@ class AnnotationReviewStore:
             raise AnnotationReviewNotFoundError(f"annotation element not found: {key}")
         return element, int(row["revision"]) if row else 0
 
-    @staticmethod
     def _write_decision(
-        connection: sqlite3.Connection, element: dict[str, Any], revision: int,
+        self, connection: sqlite3.Connection, element: dict[str, Any], revision: int,
         status: str, reviewer_id: str | None, action: str,
     ) -> None:
         key = element["key"]
@@ -323,13 +333,16 @@ class AnnotationReviewStore:
             stale_decision=False,
         )
         crop = Path(element["crop_path"])
+        analysis_dir = self.annotations_dir / element["analysis_id"]
+        if not _is_relative_to(crop, analysis_dir):
+            raise AnnotationReviewValidationError("review crop path escapes its analysis folder")
         decision = {
             "analysis_id": element["analysis_id"], "index": element["index"],
             "revision": revision, "status": status, "reviewed_at": utc_now_iso(),
             "reviewed_by": reviewer_id,
             "source_fingerprint": element["base_source_fingerprint"],
             "class_name": element["class_name"], "bbox": element["bbox"],
-            "note": element.get("note"), "crop_path": element["crop_path"],
+            "note": element.get("note"), "crop_path": crop.relative_to(analysis_dir).as_posix(),
             "crop_sha256": _file_sha256(crop) if crop.is_file() else None,
             **split,
         }
@@ -678,7 +691,10 @@ class AnnotationReviewStore:
         if preview["status"] != "ready":
             return preview
         if preview["decisions"] and not preview["importable_decisions"]:
-            raise AnnotationReviewValidationError("all legacy bboxes are invalid; refusing an empty import")
+            raise AnnotationReviewValidationError(
+                "all legacy bboxes are invalid; refusing an empty import: "
+                + ", ".join(preview["quarantined_invalid_bboxes"])
+            )
         if self.db_path.exists():
             with closing(sqlite3.connect(self.db_path, timeout=10)) as connection, connection:
                 row = connection.execute("SELECT value FROM review_meta WHERE key = 'legacy_sha256'").fetchone()
@@ -707,7 +723,14 @@ class AnnotationReviewStore:
                 for key, old in manifest["decisions"].items():
                     if key in quarantined:
                         continue  # Raw decision remains in the verified backup; source returns to pending.
-                    decision = {**old, "bbox": self._legacy_bbox(old["bbox"]), "revision": 1}
+                    analysis = self._read_analysis(
+                        self.annotations_dir / old["analysis_id"], {}, [], set(), only_index=old["index"]
+                    )
+                    element = self._find_element([analysis] if analysis else [], old["analysis_id"], old["index"])
+                    if element is None:
+                        raise AnnotationReviewValidationError(f"legacy decision has no source annotation: {key}")
+                    decision = {**old, "bbox": self._legacy_bbox(old["bbox"]),
+                                "source_fingerprint": element["base_source_fingerprint"], "revision": 1}
                     encoded = json.dumps(decision, sort_keys=True, ensure_ascii=False)
                     connection.execute("INSERT INTO review_decisions VALUES (?, ?, ?)", (key, 1, encoded))
                     connection.execute("INSERT INTO review_history VALUES (?, ?, ?, ?)", (key, 1, "legacy_import", encoded))
@@ -842,7 +865,12 @@ class AnnotationReviewStore:
             if decision:
                 decision_status = decision.get("status")
                 if decision_status in REVIEW_STATUSES:
-                    if decision.get("source_fingerprint") == base_fingerprint:
+                    legacy_fingerprint = _legacy_source_fingerprint(
+                        analysis_id=analysis_id,
+                        uploaded_at=uploaded_at if isinstance(uploaded_at, str) else None,
+                        annotation=annotation, crop_path=crop_path,
+                    ) if decision.get("source_fingerprint") != base_fingerprint else None
+                    if decision.get("source_fingerprint") in (base_fingerprint, legacy_fingerprint):
                         review_status = decision_status
                         effective_annotation = {
                             **annotation,

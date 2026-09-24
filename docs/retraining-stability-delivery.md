@@ -48,6 +48,21 @@ Linux : remplacer l'exécutable par `backend/.venv/bin/python`. Le script valide
 
 Les anciennes bbox décimales sont arrondies comme lors de la sauvegarde d'une annotation. La prévisualisation affiche `normalized_bboxes` et `quarantined_invalid_bboxes` ; seules les boîtes réellement inutilisables sont omises de SQLite et leurs éléments redeviennent « à vérifier », hors entraînement. Le JSON original reste dans la sauvegarde vérifiée : revoir ces éléments manuellement après l'import.
 
+### Archive `annotations (2).zip` testée le 24 septembre
+
+Sur une installation Windows, extraire le ZIP dans un dossier neuf, puis exécuter ces commandes depuis la racine du dépôt avec son Python backend (remplacer `<extraction>\annotations` par le vrai chemin) :
+
+```powershell
+.\backend\.venv\Scripts\python.exe scripts/repair_missing_annotation_crops.py --annotations-dir "<extraction>\annotations"
+.\backend\.venv\Scripts\python.exe scripts/repair_missing_annotation_crops.py --annotations-dir "<extraction>\annotations" --apply
+.\backend\.venv\Scripts\python.exe scripts/migrate_annotation_reviews.py --annotations-dir "<extraction>\annotations"
+.\backend\.venv\Scripts\python.exe scripts/migrate_annotation_reviews.py --annotations-dir "<extraction>\annotations" --apply
+```
+
+Pour ajouter cette archive à une installation possédant déjà `backend/annotations`, utiliser `scripts/merge_annotation_archive.py --source "<extraction>\annotations" --target backend/annotations` puis la même commande avec `--apply`. La fusion refuse les ID en collision et sauvegarde SQLite ; ne pas recopier `review-state.sqlite3` à la main. Avant de déplacer une installation ayant des validations antérieures à cette version, prévisualiser puis appliquer `scripts/upgrade_annotation_review_portability.py --annotations-dir backend/annotations` (ajouter `--apply` pour l'appliquer). Les nouveaux contrôles utilisent le contenu des PNG et des chemins relatifs ; le dossier complet peut ensuite être déplacé avec ses décisions et confirmations de classes.
+
+Sur l'archive testée : 491 décisions importées (475 validées, 16 rejetées), 6 boîtes décimales normalisées et 5 découpes dérivées recréées depuis les images/boîtes originales. Les 21 images et les `metadata.json` d'origine n'ont pas été modifiés. Neuf classes hors modèle de base ont été confirmées localement à partir de ces validations. L'apprentissage réel a créé un candidat **sans activation** : 509 validations locales au total, 486 images uniques retenues, 21 doublons et 2 annotations contradictoires écartées de la run. Apprentissage : actif 206/434, candidat 226/434 ; test réservé : 24/52 pour les deux. Ce test réservé ne prouve donc aucun gain de généralisation.
+
 Une base illisible bloque l'API (503) et n'est jamais supprimée/recréée automatiquement. Le dossier complet contient aussi les sources et découpes nécessaires à une restauration cohérente.
 
 ## Vérification effectuée
