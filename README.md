@@ -127,7 +127,8 @@ The local CPU workflow has been tested on native Windows 10 x64 (PowerShell 5.1
 and 7) and Ubuntu/WSL, including real browser-driven retraining. Native Windows
 requires a checkout on a local drive, not a UNC/WSL share. Historical research
 scripts with Linux/ext4 or private-corpus requirements are not part of this
-Windows user workflow. See [release validation](docs/stable-release-new-user-validation-20260904.md).
+Windows user workflow. See [release validation](docs/stable-release-new-user-validation-20260904.md)
+and [fresh Windows installation with legacy annotations](docs/windows-clean-install-validation-20260924.md).
 
 ## Key documentation
 
