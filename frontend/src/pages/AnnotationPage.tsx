@@ -2,6 +2,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { ImageBBoxStage } from "../components/ImageBBoxStage";
+import { AnalysisProvenance } from "../components/AnalysisProvenance";
 import type { ThemeMode } from "../components/ThemeToggle";
 import { appText } from "../i18n/text";
 import { AnnotationAnalyzerToolbar } from "./AnnotationAnalyzerToolbar";
@@ -157,6 +158,8 @@ export default function AnnotationPage({
         authSlot={authSlot}
       />
 
+      <AnalysisProvenance result={annotation.record!.result} />
+
       <div className="grid min-h-0 flex-1 gap-0 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.55fr)] 2xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.45fr)]">
         <ImageBBoxStage
           tone="annotation"
@@ -287,6 +290,7 @@ export default function AnnotationPage({
           aria-label="Inspecteur d’annotation"
         >
           <AnnotationSelectedInspector
+            recordId={id ?? null}
             focusedElement={model.focusedElement}
             focusedIdx={annotation.focusedIdx}
             focusedDisplayName={model.focusedDisplayName ?? t.unnamedElement}

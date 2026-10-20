@@ -97,3 +97,16 @@ describe('useAnnotationElementModel Phase 5 state coverage', () => {
     expect(result.current.model.displayedElements.map(({ idx }) => idx)).toEqual([0]);
   });
 });
+
+
+it('clears human approval and its synthetic score when renaming, while preserving it on note edits', () => {
+  const approved: DetectedElement = { ...element('atl', [5, 6, 7, 8], 1), source: 'approved_correction',
+    confidence_kind: 'human_approval', review: { decision_id: 'page:0', reviewed_at: null, image_pixel_sha256: 'page' } };
+  const { result } = renderHook(() => useHarness([element('unknown', [1, 2, 3, 4]), approved]));
+  act(() => result.current.model.commitElementNote(1, 'commentaire'));
+  expect(result.current.elements[1].source).toBe('approved_correction');
+  act(() => result.current.model.commitElementName(1, 'calli'));
+  expect(result.current.elements[1]).toEqual(expect.objectContaining({ source: 'manual_edit', confidence_kind: 'unscored', confidence: 0 }));
+  expect(result.current.elements[1].review).toBeUndefined();
+  expect(result.current.annotationStatus[1]).toBe('draft');
+});

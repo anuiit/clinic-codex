@@ -25,10 +25,12 @@ export function useArchetypeAssets(
   classNames: string[],
 ): ArchetypeAssetsState {
   const [state, setState] = useState<ArchetypeAssetsState>({ status: "disabled" });
-  const classKey = classNames.join("");
+  const classKey = JSON.stringify(classNames);
+  const bboxKey = bbox?.join(",") ?? "";
 
   useEffect(() => {
     if (!isArchetypeGalleryEnabled() || !recordId || !imageDataUrl || !bbox) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Invalid inputs synchronously reset externally derived assets.
       setState({ status: "disabled" });
       return;
     }
@@ -59,7 +61,7 @@ export function useArchetypeAssets(
     return () => controller.abort();
     // classKey captures the class list identity without a deep-compare lint hit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordId, imageDataUrl, bbox, classKey]);
+  }, [recordId, imageDataUrl, bboxKey, classKey]);
 
   return state;
 }

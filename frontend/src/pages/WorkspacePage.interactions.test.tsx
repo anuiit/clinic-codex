@@ -723,4 +723,20 @@ describe('WorkspacePage interaction coverage', () => {
     await waitFor(() => expect(screen.queryByText('Image prête à analyser')).not.toBeInTheDocument());
     expect(screen.getAllByText('glyph.png').length).toBeGreaterThanOrEqual(1);
   });
+
+it('preserves the reviewed name when the trust endpoint suggests another class', async () => {
+  const records = cloneRecords(RECORDS);
+  records[0].annotations = {};
+  records[0].result.elements[0] = { ...records[0].result.elements[0], class_name: 'correction métier',
+    source: 'approved_correction', confidence_kind: 'human_approval', confidence: 1, top_k: [] };
+  const user = userEvent.setup();
+  renderPage(records);
+  await waitForWorkspaceHistory();
+  await user.click(screen.getByRole('button', { name: /correction métier région 0/i }));
+  const inspector = await screen.findByTestId('workspace-focused-selected-card');
+  expect(inspector).toHaveTextContent('correction métier');
+  await waitFor(() => expect(screen.getByText('Validé', { selector: '.workspace-trust-score' })).toBeInTheDocument());
+  expect(screen.queryByText('100.0%', { selector: '.workspace-trust-score' })).not.toBeInTheDocument();
+});
+
 });

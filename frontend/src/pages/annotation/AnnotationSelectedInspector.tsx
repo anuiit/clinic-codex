@@ -9,6 +9,7 @@ import annotationStyles from "./AnnotationChrome.module.css";
 import { ElementNameCombobox } from "./ElementNameCombobox";
 
 interface AnnotationSelectedInspectorProps {
+  recordId: string | null;
   focusedElement: DetectedElement | null;
   focusedIdx: number | null;
   focusedDisplayName: string | null;
@@ -26,6 +27,7 @@ interface AnnotationSelectedInspectorProps {
 }
 
 export function AnnotationSelectedInspector({
+  recordId,
   focusedElement,
   focusedIdx,
   focusedDisplayName,
@@ -44,11 +46,12 @@ export function AnnotationSelectedInspector({
   const [noteDraft, setNoteDraft] = useState(focusedElement?.note ?? "");
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- The draft belongs to the selected element and must reset when that selection changes.
     setNoteDraft(focusedElement?.note ?? "");
     // Reset the draft only when the selected element changes, not on every
     // keystroke-driven elements update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusedIdx]);
+  }, [recordId, focusedIdx]);
 
   const commitNote = () => {
     if (focusedIdx === null) return;
@@ -97,9 +100,9 @@ export function AnnotationSelectedInspector({
               <div className="annotation-selected-metrics min-w-0">
                 <div className="px-3 py-2">
                   <div className="ui-text-meta mb-1 flex items-center justify-between font-semibold">
-                    <span>Confiance</span>
+                    <span>{focusedElement.source === "approved_correction" ? "Correction approuvée" : focusedElement.confidence_kind === "unscored" ? "Modification manuelle" : "Confiance"}</span>
                     <span className="tabular-nums text-[var(--text-body)]">
-                      {focusedConfidencePercent}%
+                      {focusedElement.source === "approved_correction" ? "Validé" : focusedElement.confidence_kind === "unscored" ? "À revoir" : `${focusedConfidencePercent}%`}
                     </span>
                   </div>
                   <div className="ui-progress-track h-2">
