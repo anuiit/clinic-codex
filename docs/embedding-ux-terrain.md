@@ -1,7 +1,7 @@
 # Embedding UX Terrain Analysis
 
 Analysis of short-term and medium-term features for the embedding-similarity
-UX surface. Based on EMBEDDING-READINESS.md, the current codebase state, and
+UX surface. Based on archive/EMBEDDING-READINESS.md, the current codebase state, and
 the dev lab prototype.
 
 ## Current State (committed on codex/embedding-ux-lab)
@@ -76,7 +76,7 @@ and text search (F4) provide more immediate value.
 ### F6: Instance-Level Embedding Search
 
 **Goal**: Search individual historical glyph instances (not just class
-prototypes). EMBEDDING-READINESS.md notes this as deferred work.
+prototypes). archive/EMBEDDING-READINESS.md notes this as deferred work.
 
 **Requirements**:
 - Pre-compute and index embeddings for every sample image in the dataset.
