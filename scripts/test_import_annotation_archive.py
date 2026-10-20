@@ -55,7 +55,13 @@ def _archive(tmp_path, *, changed_crop=False, changed_decision=False, extra=None
         for name, data in files.items():
             z.writestr(name, data)
         if extra:
-            z.writestr(*extra)
+            member, data = extra
+            if isinstance(member, str):
+                # ZipInfo() turns os.sep into "/" on Windows; set the raw name afterwards
+                # so a backslash member is really written, as an archive from another OS would be.
+                raw_name, member = member, zipfile.ZipInfo("placeholder")
+                member.filename = raw_name
+            z.writestr(member, data)
     config = tmp_path / "config.json"
     config.write_text(json.dumps({"class_names": ["calli", "atl"]}))
     return path, config
