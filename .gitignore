@@ -94,6 +94,7 @@ backend/model_registry/versions/*
 backend/model_registry/snapshots/*
 !backend/model_registry/snapshots/.gitkeep
 backend/model_registry/.locks/
+backend/model_registry/.import-original-staging/
 backend/model_registry/promotion_in_progress.json
 
 # Test artifacts
