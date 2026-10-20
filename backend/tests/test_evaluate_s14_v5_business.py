@@ -42,6 +42,8 @@ def test_fallback_rejects_non_top_two_shape():
         terminal.fallback_scores(torch.zeros(1, 3), torch.zeros(1, 3), torch.zeros(1, 3))
 
 
+@pytest.mark.research_artifacts
+@pytest.mark.skipif(not terminal.B1_PROJECTION.exists(), reason="requires unshipped research artifact: B1 runtime weights/projection.pt")
 def test_projection_path_and_hash_fail_closed(tmp_path, monkeypatch):
     copied = tmp_path / "projection.pt"
     copied.write_bytes(terminal.B1_PROJECTION.read_bytes())
@@ -127,6 +129,8 @@ def test_started_crash_state_is_auditable(tmp_path):
         terminal._reserve_one_shot_at(identity, ledger_path=ledger, output_path=output)
 
 
+@pytest.mark.research_artifacts
+@pytest.mark.skipif(not terminal.FROZEN_SPEC.exists(), reason="requires unshipped research artifact: reports/evaluate-s14-v5-business-spec-20260812/frozen-spec.json")
 def test_frozen_spec_substitution_is_rejected(tmp_path):
     substitute = tmp_path/"frozen-spec.json"
     substitute.write_bytes(terminal.FROZEN_SPEC.read_bytes())

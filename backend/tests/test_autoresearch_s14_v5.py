@@ -16,6 +16,11 @@ v5 = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = v5
 SPEC.loader.exec_module(v5)
 
+requires_b1_projection = pytest.mark.skipif(
+    not v5.PROJECTION.exists(),
+    reason="requires unshipped research artifact: B1 runtime weights/projection.pt",
+)
+
 
 def test_exact_47_plus_30_matrix_and_baselines():
     v5.assert_specs()
@@ -26,6 +31,8 @@ def test_exact_47_plus_30_matrix_and_baselines():
     assert v5.SPECS[v5.KNN1_INDEX].name == "v4-baseline-cosine-k1"
 
 
+@pytest.mark.research_artifacts
+@requires_b1_projection
 def test_projection_path_and_sha_are_the_actual_b1_runtime():
     expected = ROOT / "backend/model_registry/versions/20260811-s14-snapshot-warmstart-b1/runtime/weights/projection.pt"
     assert v5.PROJECTION == expected
@@ -33,6 +40,8 @@ def test_projection_path_and_sha_are_the_actual_b1_runtime():
     assert v5.assert_projection_identity() == {"path": str(expected.resolve()), "sha256": v5.EXPECTED_PROJECTION_SHA}
 
 
+@pytest.mark.research_artifacts
+@requires_b1_projection
 def test_projection_identity_fails_closed_on_path(tmp_path):
     copy = tmp_path / "projection.pt"
     copy.write_bytes(v5.PROJECTION.read_bytes())
@@ -40,12 +49,16 @@ def test_projection_identity_fails_closed_on_path(tmp_path):
         v5.assert_projection_identity(copy)
 
 
+@pytest.mark.research_artifacts
+@requires_b1_projection
 def test_projection_identity_fails_closed_on_hash(monkeypatch):
     monkeypatch.setattr(v5, "sha256", lambda path: "0" * 64)
     with pytest.raises(ValueError, match="SHA mismatch"):
         v5.assert_projection_identity()
 
 
+@pytest.mark.research_artifacts
+@requires_b1_projection
 def test_manifest_pins_projection_identity_and_selection():
     manifest = v5.frozen_manifest()
     assert manifest["projection"]["path"] == str(v5.PROJECTION.resolve())
@@ -80,6 +93,8 @@ def test_loader_reads_only_the_physical_train_cache(monkeypatch):
     assert len(features) == len(loaded_labels) == v5.EXPECTED_ROWS
 
 
+@pytest.mark.research_artifacts
+@requires_b1_projection
 def test_true_b1_scores_are_deterministic_and_finite():
     features = torch.randn(v5.EXPECTED_CLASSES*2, 384, generator=torch.Generator().manual_seed(9))
     labels = torch.arange(v5.EXPECTED_CLASSES).repeat_interleave(2)

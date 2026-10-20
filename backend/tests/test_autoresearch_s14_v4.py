@@ -95,6 +95,8 @@ def test_euclidean_and_cosine_k1_agree_on_normalized_data():
     assert torch.equal(cosine, euclidean)
 
 
+@pytest.mark.research_artifacts
+@pytest.mark.skipif(not v4.SEALED.exists(), reason="requires unshipped research artifact: reports/autoresearch-s14-v3-20260812/sealed/train-only.features.pt")
 def test_selection_contract_is_frozen_before_results():
     assert v4.TOP_N == 5
     assert v4.SEEDS == (17, 42, 73)

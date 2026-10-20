@@ -4,6 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 
@@ -13,6 +14,15 @@ assert SPEC and SPEC.loader
 dual = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = dual
 SPEC.loader.exec_module(dual)
+
+requires_b1_projection = pytest.mark.skipif(
+    not dual.B1_PROJECTION.exists(),
+    reason="requires unshipped research artifact: B1 runtime weights/projection.pt",
+)
+requires_protocol_inputs = pytest.mark.skipif(
+    not all(path.exists() for path in (dual.OLD_CACHE, dual.NEW_CACHE, dual.B1_PROJECTION)),
+    reason="requires unshipped research artifact: B1 projection.pt and precomputed features.pt caches",
+)
 
 
 def dataset(name: str, train_x: torch.Tensor, train_y: torch.Tensor, dev_x: torch.Tensor, dev_y: torch.Tensor):
@@ -61,6 +71,8 @@ def test_balanced_sampler_can_draw_singletons():
     assert set(sample.tolist()) == {0, 1, 2}
 
 
+@pytest.mark.research_artifacts
+@requires_protocol_inputs
 def test_protocol_has_exact_matrix_and_closed_boundaries():
     value = dual.protocol()
     assert len(value["screen_specs"]) == 12
@@ -84,6 +96,8 @@ def test_evaluate_forces_dropout_off():
     assert not next(module for module in model.modules() if isinstance(module, torch.nn.Dropout)).training
 
 
+@pytest.mark.research_artifacts
+@requires_b1_projection
 def test_b1_checkpoint_loads_into_v0():
     model = dual.Architecture("v0_mlp")
     state = torch.load(dual.B1_PROJECTION, map_location="cpu", weights_only=True)

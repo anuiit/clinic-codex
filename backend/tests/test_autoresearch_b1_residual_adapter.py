@@ -4,6 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 
@@ -14,6 +15,15 @@ assert SPEC and SPEC.loader
 adapter = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = adapter
 SPEC.loader.exec_module(adapter)
+
+_REQUIRED_ARTIFACTS = (adapter.dual.B1_PROJECTION, adapter.dual.OLD_CACHE, adapter.dual.NEW_CACHE)
+pytestmark = [
+    pytest.mark.research_artifacts,
+    pytest.mark.skipif(
+        not all(path.exists() for path in _REQUIRED_ARTIFACTS),
+        reason="requires unshipped research artifact: B1 runtime projection.pt and precomputed features.pt caches",
+    ),
+]
 
 
 def test_zero_gate_reproduces_b1_embeddings():
