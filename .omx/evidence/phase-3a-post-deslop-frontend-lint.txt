@@ -1,4 +1,0 @@
-== post-deslop frontend lint ==
-
-> codex-frontend@0.0.0 lint
-> eslint .
