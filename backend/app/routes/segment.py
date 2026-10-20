@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import sqlite3
+
 import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 
 from backend.app.errors import ApiError
+from backend.services.annotation_review import AnnotationReviewError
 from backend.services.approved_corrections import image_pixel_sha256, overlaps_correction
 from PIL import Image
 from backend.app.services.image_service import InvalidImageError, decode_uploaded_image, invalid_image_payload
@@ -44,8 +47,14 @@ def segment():
     identity = image_pixel_sha256(Image.fromarray(img))
     memory = {"elements": [], "conflicts": [], "image_pixel_sha256": identity}
     lookup = getattr(_services(), "approved_page_corrections", None)
+    corrections_unavailable_reason = None
     if use_corrections == "true" and lookup is not None:
-        memory = lookup(img)
+        try:
+            memory = lookup(img)
+        except (AnnotationReviewError, sqlite3.Error, OSError, ValueError) as exc:
+            # The review store is optional for analysis: degrade to model-only output.
+            current_app.logger.warning("approved corrections unavailable, analysing without them: %r", exc)
+            corrections_unavailable_reason = f"review store error ({type(exc).__name__})"
     if memory["conflicts"]:
         raise ApiError(code="APPROVED_CORRECTION_CONFLICT",
                        message="Cette planche possède des corrections approuvées incompatibles. Une revue est nécessaire.",
@@ -78,7 +87,11 @@ def segment():
                 models[model["artifact_id"]] = model
 
     segmenter_identity = getattr(_services(), "segmenter_provenance", lambda: None)()
+    provenance = {"image_pixel_sha256": identity, "correction_count": len(corrections),
+                  "corrections_enabled": use_corrections == "true",
+                  "corrections_unavailable": corrections_unavailable_reason is not None,
+                  "classifier_models": list(models.values()), "segmenter": segmenter_identity}
+    if corrections_unavailable_reason is not None:
+        provenance["corrections_unavailable_reason"] = corrections_unavailable_reason
     return jsonify({"num_elements": len(elements), "image_size": [int(w), int(h)], "elements": elements,
-                    "provenance": {"image_pixel_sha256": identity, "correction_count": len(corrections),
-                                   "corrections_enabled": use_corrections == "true",
-                                   "classifier_models": list(models.values()), "segmenter": segmenter_identity}})
+                    "provenance": provenance})
