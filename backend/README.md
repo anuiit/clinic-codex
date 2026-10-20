@@ -158,7 +158,7 @@ If local classifier assets are absent, backend ML requests fail with HTTP `503` 
 ## Tests
 
 ```bash
-backend/.venv/bin/python -m pytest backend/tests scripts/test_export_annotations.py scripts/test_export_approved_annotations.py scripts/test_retrain_scripts.py scripts/test_promote_model.py
+backend/.venv/bin/python -m pytest backend/tests scripts/test_export_annotations.py scripts/test_export_approved_annotations.py scripts/test_retrain_scripts.py scripts/test_import_original.py scripts/test_promote_model.py
 ```
 
 ## Retraining
@@ -175,12 +175,27 @@ The page has three tabs:
 - **Dataset** shows trainable approved crops plus pending/rejected/diagnostic exclusions.
 - **Training** shows approved-only counts, resolved config/script paths, artifact state, and latest job/log tail.
 
-Approved crops are then consumed by the retraining pipeline. You can run it from the shell:
+The Training tab and the no-argument launcher retain the small approved-only
+development flow. The canonical cumulative S/14 flow first builds an immutable
+snapshot and passes all three bound inputs explicitly:
 
 ```bash
-bash scripts/retrain.sh
-# or on Windows / PowerShell
-pwsh -NoProfile -File scripts/retrain.ps1
+backend/.venv/bin/python scripts/build_training_snapshot.py --dry-run --exclude-conflicts --json
+# The current corpus is intentionally rejected because heldout targets are underfilled.
+# Inspect the research-only plan without writing:
+backend/.venv/bin/python scripts/build_training_snapshot.py --dry-run \
+  --exclude-conflicts --allow-underfilled-holdouts --json
+
+# Materialize only a future strict plan that passes without the override:
+backend/.venv/bin/python scripts/build_training_snapshot.py \
+  --parent-manifest backend/training_corpus/snapshots/<snapshot-id>/snapshot_manifest.json \
+  --exclude-conflicts --json
+
+bash scripts/retrain.sh \
+  --elements-dir backend/training_corpus/snapshots/<snapshot-id>/Elements \
+  --approved-manifest backend/training_corpus/snapshots/<snapshot-id>/snapshot_manifest.json \
+  --metadata-csv backend/training_corpus/snapshots/<snapshot-id>/metadata.csv \
+  --backbone-manifest backend/training_corpus/backbone-pins/dinov2-vits14-local.json
 ```
 
 Or, for local development only, enable the guarded Training tab launcher before starting the backend:
@@ -200,15 +215,18 @@ If the backend restarts and later finds a persisted `running` dry-run without it
 
 The browser Training tab launcher is Bash-only. Native Windows users should run `scripts/retrain.ps1` directly unless they are using WSL/Git Bash.
 
-Both scripts run:
+For an immutable snapshot, both scripts run:
 
-1. `scripts/export_approved_annotations.py` → `backend/training_data/approved/Elements`
-   with `_approved_export_manifest.json` containing exported rows, source fingerprints, and deterministic train/val/test split provenance
-2. `backend/codex_pipeline/scripts/build_metadata.py` → `backend/training_data/approved/metadata.csv`
-3. `backend/codex_pipeline/scripts/precompute_embeddings.py` → `backend/training_data/approved/precomputed/features.pt`
-4. `backend/codex_pipeline/scripts/train.py` → `backend/model_registry/versions/<version_id>/checkpoints`
-5. `backend/codex_pipeline/scripts/evaluate.py --export-prototypes` → `backend/model_registry/versions/<version_id>/prototypes/prototypes.pt`
-6. `backend/codex_pipeline/scripts/export_model.py` → `backend/model_registry/versions/<version_id>/runtime/`, `manifest.json`, `model-card.md`, and `checksums.sha256`
+1. validate the supplied `training-snapshot.v2` manifest, metadata, checksums,
+   persisted splits, and exact 286-class runtime order
+2. `backend/codex_pipeline/scripts/precompute_embeddings.py` → version-local `features.pt`
+3. `backend/codex_pipeline/scripts/train.py` → `backend/model_registry/versions/<version_id>/checkpoints`
+4. `backend/codex_pipeline/scripts/evaluate.py --prototype-split train --export-prototypes` → `backend/model_registry/versions/<version_id>/prototypes/prototypes.pt`
+5. `backend/codex_pipeline/scripts/export_model.py` → `backend/model_registry/versions/<version_id>/runtime/`, `manifest.json`, `model-card.md`, and `checksums.sha256`
+
+The legacy no-argument flow still exports current approvals for local UI smoke
+testing, but it is not the production promotion contract. `locked_test` is
+reserved for the later non-regression report and never enters prototypes.
 
 Dry-run the explicit stage list without training:
 
@@ -228,6 +246,41 @@ with the promotion tool:
 backend/.venv/bin/python scripts/promote_model.py <version_id> --dry-run
 backend/.venv/bin/python scripts/promote_model.py <version_id>
 ```
+
+## Capture the historical runtime as `original`
+
+Before the first promotion, capture the existing local runtime once with an
+explicit version ID. Always inspect the dry-run first, then repeat the exact
+command without `--dry-run` only after its three hashes and destinations are
+expected:
+
+```bash
+backend/.venv/bin/python scripts/import_original.py \
+  --registry-dir backend/model_registry \
+  --runtime-dir backend/codex_model \
+  --version-id 20260810T000000Z-nogit-original --dry-run --json
+
+backend/.venv/bin/python scripts/import_original.py \
+  --registry-dir backend/model_registry \
+  --runtime-dir backend/codex_model \
+  --version-id 20260810T000000Z-nogit-original --json
+```
+
+The import takes the same exclusive lock as promotion, copies the three runtime
+artifacts through a private staging directory, and writes an immutable package
+whose provenance names the real runtime, never the staging path. If
+`promoted` is unset, it is initialized to `original`; an already valid promoted
+version remains promoted. A successful JSON response may contain `warnings` if
+private staging cleanup failed after publication. Treat that as a bounded local
+residue, not as a failed import.
+
+If the command reports an error, a warning, a held lock, a staging residue, or
+an orphaned version directory, stop manual imports/promotions and stop the
+backend process before investigating. Inspect `index.json`, the version's
+`manifest.json` and `checksums.sha256`, and the exact reported paths. Do not
+delete lock, staging, or version directories automatically; remove them
+manually only after confirming no import, promotion, or training process is
+running and the recorded hashes are understood.
 
 Promotion validates the registered version, rejects unsafe artifact paths,
 checks index-pinned manifest/checksum hashes, verifies `checksums.sha256`,

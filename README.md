@@ -31,7 +31,7 @@ See [ANNOTATIONS.md](ANNOTATIONS.md) for the full annotation/export/retraining p
 
 ## Requirements
 
-- Python `3.10` or `3.11`.
+- Python `3.11`.
 - Node.js `>=22.22.0` (matches `frontend/package.json`).
 - Network access during setup for CPU PyTorch wheels, MobileSAM from GitHub, and model artifacts/downloads.
 
@@ -83,7 +83,7 @@ npm audit --audit-level=high --omit=dev
 npm run test:e2e
 
 # Backend/script tests
-backend/.venv/bin/python -m pytest backend/tests scripts/test_export_annotations.py scripts/test_export_approved_annotations.py scripts/test_retrain_scripts.py scripts/test_promote_model.py
+backend/.venv/bin/python -m pytest backend/tests scripts/test_export_annotations.py scripts/test_export_approved_annotations.py scripts/test_retrain_scripts.py scripts/test_import_original.py scripts/test_promote_model.py
 ```
 
 ## Phase 1 local-only security baseline
@@ -100,8 +100,20 @@ It writes checkpoints, prototypes, runtime-ready files, `manifest.json`,
 `backend/model_registry/versions/<version_id>/`.
 
 ```bash
-# Validate paths without training or changing runtime files
-bash scripts/retrain.sh --dry-run
+# Audit and plan the cumulative snapshot without writing it
+backend/.venv/bin/python scripts/build_training_snapshot.py \
+  --dry-run --exclude-conflicts --json
+
+# Research-only diagnosis when the strict plan reports heldout deficits
+backend/.venv/bin/python scripts/build_training_snapshot.py \
+  --dry-run --exclude-conflicts --allow-underfilled-holdouts --json
+
+# After materialization, validate the S/14 snapshot recipe without training
+bash scripts/retrain.sh --dry-run \
+  --elements-dir backend/training_corpus/snapshots/<snapshot-id>/Elements \
+  --approved-manifest backend/training_corpus/snapshots/<snapshot-id>/snapshot_manifest.json \
+  --metadata-csv backend/training_corpus/snapshots/<snapshot-id>/metadata.csv \
+  --backbone-manifest backend/training_corpus/backbone-pins/dinov2-vits14-local.json
 
 # After a real run, inspect and promote explicitly
 backend/.venv/bin/python scripts/promote_model.py <version_id> --dry-run
@@ -111,6 +123,13 @@ backend/.venv/bin/python scripts/promote_model.py <version_id>
 backend/.venv/bin/python scripts/promote_model.py --rollback --dry-run
 backend/.venv/bin/python scripts/promote_model.py --rollback
 ```
+
+The persisted `locked_test` rows are never used for training, checkpoint
+selection, or prototype construction. Snapshot candidates also require a
+passing, hash-bound E2E report before promotion. See
+[`docs/p3-retrainable-data-contract-20260810.md`](docs/p3-retrainable-data-contract-20260810.md).
+Future snapshots also use the fail-closed split policy described in
+[`docs/p5b-fail-closed-split-policy-20260811.md`](docs/p5b-fail-closed-split-policy-20260811.md).
 
 Promotion snapshots current runtime files under `backend/model_registry/snapshots/`
 before atomically updating `backend/codex_model/weights/*.pt` and

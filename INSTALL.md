@@ -15,8 +15,8 @@ Before installing, you need to have the Clinic Codex files on your computer.
 You'll need three tools installed. They are standard pieces of software used by many applications:
 
 1. **Git**: Used to manage the project files. [Download here](https://git-scm.com/downloads).
-2. **Python (3.10 or 3.11)**: This is the engine that runs our AI.
-   - **Important**: Please use version **3.10 or 3.11**. Newer versions (like 3.12 or 3.13) are not yet compatible with the AI libraries we use. [Download Python 3.11 here](https://www.python.org/downloads/release/python-3119/).
+2. **Python 3.11**: This is the engine that runs our AI.
+   - **Important**: Please use Python **3.11**. Other minor versions are not part of the supported local setup. [Download Python 3.11 here](https://www.python.org/downloads/release/python-3119/).
 3. **Node.js (version 22.22.0 or newer)**: This runs the visual part of the tool and matches the app's `frontend/package.json` requirement. [Download here](https://nodejs.org/).
 
 The automated installer downloads large/networked dependencies, including CPU PyTorch wheels, MobileSAM from GitHub, and model files used by the analysis pipeline.
@@ -133,7 +133,8 @@ To stop the tool, go back to your Terminal or PowerShell window and press **Ctrl
 
 - **"Python" or "Node" not found**: Ensure you've installed them from their official websites and restarted your Terminal or PowerShell window.
 - **Port already in use**: This usually means the tool is already running in another window. Close that window or stop the process.
-- **Analysis fails or never finishes**: Make sure you are using Python 3.10 or 3.11 and review the backend error shown in the launcher terminal.
+- **Analysis fails or never finishes**: Make sure you are using Python 3.11 and review the backend error shown in the launcher terminal.
+- **The installer reports an older virtual environment**: Remove `backend/.venv`, install Python 3.11, and run the installer again. The installer does not silently upgrade an existing environment created with another Python version.
 - **Authentication secret is missing**: Re-run the installer. It adds only missing variables to `backend/.env` and preserves existing settings.
 - **Backend won't start, error mentions `prototypes.pt`**:
   The model weights need to be exported once before first use. The launcher script (`scripts/run-dev.sh` or `scripts/run-dev.ps1`) does this automatically. If it fails, the source artefact `backend/prototypes/prototypes.pt` may be missing — re-download the project ZIP from GitHub.
@@ -172,7 +173,7 @@ backend/.venv/bin/pip install --no-cache-dir --prefer-binary --extra-index-url h
 
 ### 5. Install Image Analysis Tools
 ```bash
-backend/.venv/bin/pip install --no-cache-dir --prefer-binary "segment-anything==1.0" "git+https://github.com/ChaoningZhang/MobileSAM.git" "albumentations>=1.4,<2.0" "timm>=0.9"
+backend/.venv/bin/pip install --no-cache-dir --prefer-binary "segment-anything==1.0" "git+https://github.com/ChaoningZhang/MobileSAM.git@b01a9ccef3b9e10b099b544efe004d0871802c3b" "albumentations>=1.4,<2.0" "timm>=0.9"
 ```
 
 ### 6. Set Up the Web Interface
