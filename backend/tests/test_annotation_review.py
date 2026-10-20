@@ -368,6 +368,7 @@ def test_legacy_import_requires_explicit_apply_and_keeps_verified_backup(tmp_pat
     assert imported["status"] == "imported"
     assert Path(imported["backup"]).read_bytes() == legacy_path.read_bytes()
     assert store.import_legacy_manifest()["status"] == "already_imported"
+    assert store.preview_legacy_import()["status"] == "already_imported"
     assert store.list_queue()["analyses"][0]["elements"][0]["revision"] == 1
     assert store.set_status("legacy-1", 0, "pending", expected_revision=1)["element"]["revision"] == 2
 

@@ -727,7 +727,12 @@ class AnnotationReviewStore:
                 valid_by_status[decision["status"]] += 1
             else:
                 stale.append(key)
-        return {"status": "ready", "decisions": len(manifest["decisions"]),
+        status = "ready"
+        if self.has_database():
+            with closing(sqlite3.connect(self.db_path, timeout=10)) as connection, connection:
+                row = connection.execute("SELECT value FROM review_meta WHERE key = 'legacy_sha256'").fetchone()
+            status = "already_imported" if row and row[0] == digest else "database_exists"
+        return {"status": status, "decisions": len(manifest["decisions"]),
                 "importable_decisions": len(manifest["decisions"]) - len(quarantined),
                 "valid_decisions": sum(valid_by_status.values()),
                 "valid_by_status": valid_by_status,
@@ -754,6 +759,8 @@ class AnnotationReviewStore:
 
     def import_legacy_manifest(self) -> dict[str, Any]:
         preview = self.preview_legacy_import()
+        if preview["status"] == "database_exists":
+            raise AnnotationReviewConflictError("review database already exists with different state; refusing import")
         if preview["status"] != "ready":
             return preview
         if preview["decisions"] and not preview["importable_decisions"]:
