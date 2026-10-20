@@ -18,12 +18,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-import albumentations as A
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from albumentations.pytorch import ToTensorV2
+from codex_model.classifier import _preprocess_image
 
 logger = logging.getLogger(__name__)
 
@@ -170,23 +169,6 @@ class InferenceEngine:
             param.requires_grad = False
         self.backbone.eval()
 
-        # ---- preprocessing transform (matches validation transform) ----
-        self._transform = A.Compose(
-            [
-                A.LongestMaxSize(max_size=image_size),
-                A.PadIfNeeded(
-                    min_height=image_size,
-                    min_width=image_size,
-                    border_mode=0,          # cv2.BORDER_CONSTANT
-                    value=(255, 255, 255),  # white padding
-                ),
-                A.Normalize(
-                    mean=(0.485, 0.456, 0.406),
-                    std=(0.229, 0.224, 0.225),
-                ),
-                ToTensorV2(),
-            ]
-        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -208,9 +190,7 @@ class InferenceEngine:
         Returns:
             Float tensor of shape (1, 3, ``image_size``, ``image_size``).
         """
-        augmented = self._transform(image=image)
-        tensor: torch.Tensor = augmented["image"]          # (3, H, W) float32
-        return tensor.unsqueeze(0).to(self.device)         # (1, 3, H, W)
+        return _preprocess_image(image, self.image_size).to(self.device)
 
     def embed(self, images: torch.Tensor) -> torch.Tensor:
         """

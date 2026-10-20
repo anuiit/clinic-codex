@@ -114,13 +114,29 @@ class Settings:
 
     @property
     def class_config_path(self) -> Path:
+        if self.classifier_runtime_dir is not None:
+            return self.classifier_runtime_dir / "config.json"
         return self.backend_root / "codex_model" / "config.json"
 
     @property
     def classifier_weights_dir(self) -> Path:
+        if self.classifier_runtime_dir is not None:
+            return self.classifier_runtime_dir / "weights"
         if self.model_dir:
             return Path(self.model_dir).expanduser()
         return self.backend_root / "codex_model" / "weights"
+
+    @property
+    def classifier_runtime_dir(self) -> Path | None:
+        if not self.model_dir:
+            return None
+        model_path = Path(self.model_dir).expanduser()
+        has_runtime_layout = (model_path / "config.json").is_file() and (
+            model_path / "weights"
+        ).is_dir()
+        if has_runtime_layout:
+            return model_path
+        return None
 
     @property
     def mobile_sam_checkpoint_path(self) -> Path:

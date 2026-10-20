@@ -10,6 +10,9 @@ import numpy as np
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from typing import Optional
+from functools import partial
+
+from codex_model.classifier import _preprocess_image
 
 
 def _compose(transforms, seed: Optional[int] = None):
@@ -162,22 +165,13 @@ def get_train_transform_numpy(cfg: dict, image_size: int = 224, seed: Optional[i
     return _compose(transforms, seed=seed)
 
 
-def get_val_transform(image_size: int = 224) -> A.Compose:
-    """Minimal transforms for validation / inference."""
-    return A.Compose([
-        A.LongestMaxSize(max_size=image_size),
-        A.PadIfNeeded(
-            min_height=image_size,
-            min_width=image_size,
-            border_mode=0,
-            fill=(255, 255, 255),
-        ),
-        A.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-        ToTensorV2(),
-    ])
+def _validation_transform(*, image: np.ndarray, image_size: int, **kwargs) -> dict:
+    return {"image": _preprocess_image(image, image_size).squeeze(0)}
+
+
+def get_val_transform(image_size: int = 224):
+    """Validation tensor identical to runtime; partial remains worker-picklable."""
+    return partial(_validation_transform, image_size=image_size)
 
 
 def mixup(img1: np.ndarray, img2: np.ndarray, alpha: float = 0.3) -> np.ndarray:

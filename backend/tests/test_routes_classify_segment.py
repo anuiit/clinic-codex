@@ -163,7 +163,7 @@ def test_segment_shape_and_batch_classifies_valid_crops_once():
         assert happy.status_code == 200
         body = happy.get_json()
 
-    assert set(body) == {"num_elements", "image_size", "elements"}
+    assert set(body) == {"num_elements", "image_size", "elements", "provenance"}
     assert body["image_size"] == [8, 6]
     assert body["num_elements"] == 2
     assert body["elements"][0]["bbox"] == [1, 2, 3, 4]
@@ -220,7 +220,9 @@ def test_segment_skips_batch_when_no_valid_crops():
         resp = _post_image(client, "/segment")
 
     assert resp.status_code == 200
-    assert resp.get_json() == {"num_elements": 0, "image_size": [8, 6], "elements": []}
+    body = resp.get_json()
+    assert body["num_elements"] == 0 and body["image_size"] == [8, 6] and body["elements"] == []
+    assert body["provenance"]["correction_count"] == 0
     assert services.classify_calls == 0
     assert services.classify_batch_calls == 0
 

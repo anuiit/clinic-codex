@@ -31,6 +31,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from codex_model.classifier import _preprocess_image
 from codex_pipeline.data.augmentation import get_train_transform_numpy
 from codex_pipeline.data.metadata import filter_classes, load_metadata
 from codex_pipeline.determinism import configure_determinism
@@ -65,22 +66,8 @@ def load_and_augment(image_path, transform, image_size):
 
 def load_clean(image_path, image_size):
     """Load image without augmentation (for the original copy)."""
-    img = Image.open(image_path).convert("RGB")
-
-    # Resize + pad to square
-    w, h = img.size
-    scale = image_size / max(w, h)
-    new_w, new_h = int(w * scale), int(h * scale)
-    img = img.resize((new_w, new_h), Image.BILINEAR)
-    padded = Image.new("RGB", (image_size, image_size), (255, 255, 255))
-    padded.paste(img, ((image_size - new_w) // 2, (image_size - new_h) // 2))
-
-    img_np = np.array(padded, dtype=np.float32) / 255.0
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-    img_np = (img_np - mean) / std
-
-    return torch.from_numpy(img_np).permute(2, 0, 1)
+    with Image.open(image_path) as image:
+        return _preprocess_image(image, image_size).squeeze(0)
 
 
 def compute_adaptive_multiplier(class_counts, base_multiplier, max_multiplier=15):

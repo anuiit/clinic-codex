@@ -19,6 +19,8 @@ from typing import Any, Iterable, Sequence
 
 from PIL import Image
 
+from .approved_corrections import stored_image_digest
+
 try:
     from backend.services.annotation_storage import (
         clamp_bbox,
@@ -43,6 +45,7 @@ SPLIT_REASONS = {
     "rejected_review",
     "missing_crop",
     "stale_decision",
+    "explicit_exclusion",
 }
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_FILENAME = "review-index.json"
@@ -200,6 +203,8 @@ def _split_payload_for_element(
 ) -> dict[str, str]:
     if review_status == TRAINABLE_STATUS and crop_exists and not stale_decision:
         persisted_split = (decision or {}).get("dataset_split")
+        if persisted_split == "excluded" and (decision or {}).get("status") == "approved":
+            return {"dataset_split": "excluded", "split_reason": "explicit_exclusion"}
         dataset_split = (
             persisted_split
             if persisted_split in TRAINABLE_DATASET_SPLITS
@@ -311,6 +316,7 @@ class AnnotationReviewStore:
             "status": status,
             "reviewed_at": utc_now_iso(),
             "reviewed_by": reviewer_id,
+            "source_image_pixel_sha256": stored_image_digest(self.annotations_dir / analysis_id / "image.png"),
             "source_fingerprint": element["source_fingerprint"],
             "class_name": element["class_name"],
             "bbox": element["bbox"],
@@ -455,6 +461,7 @@ class AnnotationReviewStore:
             "status": status,
             "reviewed_at": utc_now_iso(),
             "reviewed_by": reviewer_id,
+            "source_image_pixel_sha256": stored_image_digest(self.annotations_dir / analysis_id / "image.png"),
             "source_fingerprint": element["source_fingerprint"],
             "class_name": element["class_name"],
             "bbox": element["bbox"],
@@ -673,13 +680,18 @@ class AnnotationReviewStore:
                     )
                 )
 
-            trainable = review_status == TRAINABLE_STATUS and crop_exists and not stale_decision
             split_payload = _split_payload_for_element(
                 key=key,
                 review_status=review_status,
                 crop_exists=crop_exists,
                 stale_decision=stale_decision,
                 decision=decision,
+            )
+            trainable = (
+                review_status == TRAINABLE_STATUS
+                and crop_exists
+                and not stale_decision
+                and split_payload["dataset_split"] in TRAINABLE_DATASET_SPLITS
             )
             elements.append(
                 {
