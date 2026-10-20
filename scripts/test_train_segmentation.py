@@ -9,6 +9,7 @@ from scripts.train_segmentation import (box_mask, evaluate, grid_points, mask_lo
 
 
 def test_runtime_grid_is_the_sam_grid():
+    pytest.importorskip("mobile_sam", reason="mobile_sam is not installed (not in requirements-dev.txt)")
     from mobile_sam.utils.amg import build_point_grid
     expected = build_point_grid(16) * np.array([320, 640])
     np.testing.assert_array_equal(grid_points(320, 640), expected)

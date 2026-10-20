@@ -107,6 +107,8 @@ def flask_mod(monkeypatch):
     services = mod.app.extensions["clinic_services"]
     monkeypatch.setattr(services, "_raise_for_missing_classifier_assets", lambda: None)
     monkeypatch.setattr(services, "_raise_for_missing_mobile_sam_checkpoint", lambda: None)
+    # The stub segmenter has no weights; avoid hashing the real checkpoint path.
+    monkeypatch.setattr("backend.codex_model.classifier._sha256_file", lambda path: "0" * 64)
     return mod
 
 
