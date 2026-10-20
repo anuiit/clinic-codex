@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from scripts import research_recognition_stability as core
+from scripts.experiments import research_recognition_stability as core
 from scripts.train_segmentation import read_json,write_json,sha256
 from codex_model.classifier import CodexClassifier,_preprocess_image
 from codex_pipeline.segmentation.mobilesam import MobileSAMSegmenter

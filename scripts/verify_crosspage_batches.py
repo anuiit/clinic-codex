@@ -3,7 +3,7 @@
 import collections,csv,json
 from pathlib import Path
 import torch
-from scripts import research_crosspage_batches as b
+from scripts.experiments import research_crosspage_batches as b
 m=b.m
 
 def active(ids,d):
