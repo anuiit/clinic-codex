@@ -77,8 +77,9 @@ def import_annotation_archive(
         if len(infos) > 100_000 or sum(info.file_size for info in infos) > 1024**3:
             raise ValueError("annotation archive exceeds size limits")
         for info in infos:
+            # On Windows zipfile rewrites "\" to "/" in info.filename; check the raw name too.
             path = PurePosixPath(info.filename)
-            if (path.is_absolute() or ".." in path.parts or "\\" in info.filename
+            if (path.is_absolute() or ".." in path.parts or "\\" in info.orig_filename
                     or ":" in info.filename or info.flag_bits & 1
                     or stat.S_ISLNK(info.external_attr >> 16)
                     or info.file_size > 128 * 1024**2):
