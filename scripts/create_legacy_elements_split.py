@@ -35,25 +35,25 @@ DEFAULT_OUTPUT_DIR = Path("backend/training_corpus/external/legacy-elements-spli
 @dataclass(frozen=True)
 class SplitRow:
     index: int
-    dataset_split: st
-    split_reason: st
+    dataset_split: str
+    split_reason: str
     class_label: int
-    class_name: st
-    class_dir: st
+    class_name: str
+    class_dir: str
     image_index: int
     image_count: int
-    source_group: st
-    output_path: st
-    source_sha256: st
-    output_sha256: st
+    source_group: str
+    output_path: str
+    source_sha256: str
+    output_sha256: str
 
 
 @dataclass(frozen=True)
 class GroupRecord:
     group_index: int
-    source_group: st
-    dataset_split: st
-    split_reason: st
+    source_group: str
+    dataset_split: str
+    split_reason: str
     image_count: int
     class_count: int
     class_names: list[str] = field(default_factory=list)
@@ -63,13 +63,13 @@ class GroupRecord:
 
 @dataclass
 class SplitReport:
-    schema_version: st
-    hash_algorithm: st
-    source_manifest: st
-    source_manifest_sha256: st
-    source_manifest_schema_version: st
-    output_dir: st
-    split_manifest: st
+    schema_version: str
+    hash_algorithm: str
+    source_manifest: str
+    source_manifest_sha256: str
+    source_manifest_schema_version: str
+    output_dir: str
+    split_manifest: str
     val_fraction: float
     test_fraction: float
     class_count: int
@@ -85,8 +85,8 @@ class SplitReport:
     class_split_counts: dict[str, dict[str, int]]
     split_counts: dict[str, int]
     group_counts: dict[str, int]
-    rows_sha256: st
-    group_assignments_sha256: st
+    rows_sha256: str
+    group_assignments_sha256: str
     groups: list[GroupRecord]
     rows: list[SplitRow]
 
@@ -533,5 +533,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cove
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

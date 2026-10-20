@@ -653,7 +653,8 @@ def test_build_core_report_runtime_guard_and_coverage(tmp_path):
     report, _ = a2.build_core_report(rows, caches_dir, runtime_dir, bootstrap_seed_base=1, bootstrap_draws=200)
 
     assert report["runtime_guard"]["verified_unchanged_before_analysis"] is True
-    assert report["runtime_guard"]["verified_unchanged_after_analysis"] is True
+    assert report["runtime_guard"]["verified_unchanged_after_deployed_prediction_io"] is True
+    assert report["runtime_guard"]["verified_unchanged_after_full_pipeline"] is True
     assert report["deployed_prediction_coverage"]["n_unique_rows"] == 3
     assert report["statistics"]["n_unique_rows"] == 3
     assert report["statistics"]["n_components"] == 2

@@ -83,9 +83,9 @@ if ($IsWin -and $RepoProviderPath.StartsWith('\\')) {
 
 $Python = $null
 $candidates = if ($IsWin) {
-    @('py -3.11', 'py -3.10', 'python3.11', 'python3.10', 'python')
+    @('py -3.11', 'python3.11', 'python')
 } else {
-    @('python3.11', 'python3.10', 'python3', 'python')
+    @('python3.11', 'python3', 'python')
 }
 
 foreach ($candidate in $candidates) {
@@ -94,14 +94,14 @@ foreach ($candidate in $candidates) {
     $args_ = if ($parts.Length -gt 1) { $parts[1..($parts.Length - 1)] } else { @() }
     try {
         $ver = & $cmd @args_ --version 2>&1
-        if ("$ver" -match 'Python (3\.(10|11))') {
+        if ("$ver" -match 'Python 3\.11(?:\.|$)') {
             $Python = @{ cmd = $cmd; args = $args_ }
             Log "Using $candidate ($ver)"
             break
         }
     } catch {}
 }
-if (-not $Python) { Fail "Need Python 3.10 or 3.11. Install from python.org (Windows) or via your package manager (Linux/macOS)." }
+if (-not $Python) { Fail "Need Python 3.11. Install it from python.org or with a Python version manager, then reopen PowerShell." }
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Fail 'Git is required to install MobileSAM. Install Git, reopen PowerShell, then re-run this script.'
@@ -119,7 +119,7 @@ if ($NodeVersion -lt [version]'22.22.0') {
 }
 
 $verCheck = & $Python.cmd @($Python.args) -c 'import sys; print(str(sys.version_info.major) + "." + str(sys.version_info.minor))' 2>&1
-if ($verCheck -notmatch '^3\.(10|11)$') { Fail "Python reports version $verCheck - need 3.10 or 3.11." }
+if (("$verCheck").Trim() -ne '3.11') { Fail "Python reports version $verCheck - need Python 3.11." }
 
 $freeGB = Get-FreeSpaceGB $RepoRoot
 if ($null -eq $freeGB) {
@@ -148,6 +148,10 @@ if (-not (Test-Path $VenvPy)) {
     & $Python.cmd @($Python.args) -m venv $VenvDir
     if ($LASTEXITCODE -ne 0) { Fail 'venv creation failed' }
 } else {
+    $VenvVersion = (& $VenvPy -c 'import sys; print(str(sys.version_info.major) + "." + str(sys.version_info.minor))' 2>&1).ToString().Trim()
+    if ($VenvVersion -ne '3.11') {
+        Fail "Existing backend/.venv uses Python $VenvVersion. Remove backend/.venv and re-run the installer with Python 3.11."
+    }
     Log '  reusing existing venv'
 }
 

@@ -244,6 +244,70 @@ class DeployedRuntime:
             raise LotASchemaError("deployed prototypes contain non-finite values")
         self._prototypes = prototypes
         self._class_labels = [int(value) for value in proto_data["class_labels"].tolist()]
+        self.class_order_verification = self._verify_class_order(proto_data)
+
+    def _verify_class_order(self, proto_data: dict) -> dict:
+        """Full positional hardening (argos review round 2): predict_topk()
+        returns labels from self._class_labels (the "native" ID space,
+        e.g. legacy/DB-style IDs), while every Lot A caller that compares
+        those predictions to the research pipeline's labels assumes
+        self._class_labels[i] (position i, i.e. the i-th smallest native
+        ID) names the SAME class as self.config["class_names"][i]. This is
+        exactly the invariant backend/codex_model/classifier.py's own
+        _load_weights() enforces at load time (names == config.class_names)
+        — mirrored here so every DeployedRuntime consumer gets the same
+        guarantee, not just classifier.py's own classify()/classify_batch().
+
+        Fully verifiable here because both class-name sources are present
+        in the artifacts themselves (proto_data["class_names"]: native_id
+        -> name; self.config["class_names"]: ordered list) — no fallback to
+        a weaker "set + sort" invariant is needed when this data exists.
+        Raises LotASchemaError on any positional mismatch; records what was
+        checked (and why, if it could not be) for transparency."""
+        config_class_names = self.config.get("class_names")
+        proto_class_names = proto_data.get("class_names")
+        if not isinstance(config_class_names, list) or not isinstance(proto_class_names, dict):
+            return {
+                "fully_verified": False,
+                "reason": (
+                    "config.json['class_names'] (list) and/or prototypes.pt['class_names'] "
+                    "(native_id -> name dict) missing — falling back to the weaker "
+                    "invariant already enforced elsewhere: self._class_labels is unique "
+                    "and sorted ascending (checked below), so position order is at least "
+                    "well-defined and stable, but per-position class-identity cannot be "
+                    "cross-checked against config.json without both name sources"
+                ),
+            }
+        mismatches = []
+        for position, native_label in enumerate(self._class_labels):
+            expected_name = (
+                config_class_names[position] if position < len(config_class_names) else None
+            )
+            actual_name = proto_class_names.get(native_label)
+            if expected_name != actual_name:
+                mismatches.append(
+                    {
+                        "position": position,
+                        "native_label": native_label,
+                        "config_class_name": expected_name,
+                        "prototype_class_name": actual_name,
+                    }
+                )
+        if mismatches:
+            raise LotASchemaError(
+                "deployed runtime class-order mismatch between config.json['class_names'] "
+                f"and prototypes.pt at {len(mismatches)} position(s) (first 5 shown): "
+                f"{mismatches[:5]}"
+            )
+        return {
+            "fully_verified": True,
+            "n_classes_checked": len(self._class_labels),
+            "method": (
+                "for every position i, config['class_names'][i] == "
+                "prototypes.pt['class_names'][class_labels_sorted[i]] — the exact "
+                "invariant classifier.py._load_weights() enforces"
+            ),
+        }
 
     def _current_sha256(self) -> dict[str, str]:
         return {

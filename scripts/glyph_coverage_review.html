@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revue des annotations — 17 planches</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#24303b;background:#f4f6f8}*{box-sizing:border-box}body{margin:0}header{padding:18px 24px;background:#fff;border-bottom:1px solid #d4dbe2}h1{font-size:22px;margin:0 0 6px}p{margin:6px 0;font-size:14px;line-height:1.5}.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}input,select,button,textarea{font:inherit;border:1px solid #bdc8d2;border-radius:6px;padding:8px;background:#fff}button{cursor:pointer}button:hover{background:#edf3f7}button.primary{background:#176882;color:white;border-color:#176882}button.danger{color:#9c252b}button:disabled{opacity:.5;cursor:default}label{font-size:14px}main{padding:18px 24px;display:grid;grid-template-columns:minmax(450px,1fr) 390px;gap:18px}.card{background:#fff;border:1px solid #d4dbe2;border-radius:10px;padding:14px}h2{font-size:17px;margin:0 0 8px}#viewport{height:620px;overflow:auto;background:#e8edf1;margin-top:12px;position:relative}canvas{display:block}#planche{touch-action:none;cursor:crosshair}#zoomCrop{max-width:100%;height:210px;object-fit:contain;background:#eef1f3;margin:12px auto}.fields{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.fields label{display:block}.fields input{width:100%}.muted{color:#566573;font-size:13px}.notice{color:#775007;background:#fff5d9;padding:10px;border-radius:6px}#status{min-height:24px;font-weight:600;color:#8d3d00}#itemList{max-height:280px;overflow:auto;margin-top:8px}.item{display:block;width:100%;text-align:left;margin:4px 0;padding:8px;font-size:13px}.item.selected{outline:2px solid #176882}.badge{font-size:12px;border-radius:4px;padding:3px 6px;background:#e8eff4}#notes{width:100%;height:55px}dialog{width:min(900px,92vw);border:1px solid #b9c5cf;border-radius:10px}dialog textarea{width:100%;height:55vh;font-family:monospace;font-size:12px}#duplicates{margin-top:10px}.duplicate{padding:8px;background:#fff5d9;margin-top:6px}.duplicate select{max-width:100%;margin-top:5px}#progress{font-variant-numeric:tabular-nums}@media(max-width:950px){main{grid-template-columns:1fr;padding:12px}#viewport{height:520px}header{padding:14px}}
+</style>
+<header>
+<h1>Vérifier les glyphes manquants et la complétude des planches</h1>
+<p>Bleu : annotations existantes · Orange : suggestions à vérifier · Vert : boîtes validées dans cette session · Gris : régions exclues du catalogue.</p>
+<p class="notice">Les suggestions ne prouvent pas l’exhaustivité. Inspectez aussi la planche entière. Les changements restent dans cette fenêtre : exportez les décisions avant de fermer. Cet outil ne modifie pas le corpus.</p>
+<div class="bar"><label>Relecteur <input id="reviewer" placeholder="Nom ou identifiant" maxlength="160"></label><button id="export" class="primary">Exporter les décisions</button><label>Reprendre un export <input id="import" type="file" accept=".json,application/json"></label></div>
+<div id="status" role="status" aria-live="polite"></div>
+</header>
+<main>
+<section class="card"><div class="bar"><button id="previous" aria-label="Planche précédente">←</button><select id="page" aria-label="Planche"></select><button id="next" aria-label="Planche suivante">→</button><span id="progress" class="badge"></span></div>
+<div class="bar"><label><input id="showKnown" type="checkbox" checked> Annotations</label><label><input id="showCandidates" type="checkbox" checked> Suggestions</label><label>Zoom <select id="zoom"><option value="fit">Adapter</option><option value="1">100 %</option><option value="2">200 %</option></select></label><button id="draw">Ajouter une boîte</button></div>
+<div id="viewport"><canvas id="planche" aria-label="Planche annotée : cliquer une boîte pour la sélectionner, ou tracer une nouvelle boîte en mode ajout"></canvas></div>
+<p class="muted">Une boîte peut en contenir une autre. Les propositions proches sont regroupées ; regardez les suggestions de chaque modèle dans le détail.</p>
+<div id="duplicates"></div>
+<hr><label><input id="inspected" type="checkbox"> J’ai inspecté toute la planche et vérifié les annotations existantes, y compris les zones sans suggestion.</label>
+<div class="bar"><label>Couverture <select id="coverage"><option value="unreviewed">Non attestée</option><option value="incomplete">Incomplète / à poursuivre</option><option value="complete">Complète après inspection</option></select></label><span id="coverageSummary" class="muted"></span></div>
+</section>
+<aside class="card"><h2>Régions à vérifier</h2><div class="bar"><select id="kind" aria-label="Type de région"><option value="candidate">Suggestions et ajouts</option><option value="known">Annotations existantes</option></select><select id="filter" aria-label="État"><option value="all">Toutes</option><option value="pending">À décider</option><option value="accepted">Validées</option><option value="rejected">Écartées / supprimées</option></select></div><div id="itemList"></div>
+<hr><h2 id="selectedTitle">Sélectionner une région</h2><p id="detail" class="muted"></p><canvas id="zoomCrop" width="360" height="210" aria-label="Agrandissement de la région sélectionnée"></canvas>
+<label>Classe <input id="class" list="classes" style="width:100%" autocomplete="off"></label><datalist id="classes"></datalist>
+<div class="fields"><label>x<input id="x" type="number" min="0"></label><label>y<input id="y" type="number" min="0"></label><label>largeur<input id="w" type="number" min="1"></label><label>hauteur<input id="h" type="number" min="1"></label></div>
+<label>Note<textarea id="notes" maxlength="4000"></textarea></label><div class="bar"><button id="accept" class="primary" disabled>Valider la boîte et le nom</button><button id="reject" class="danger" disabled>Écarter</button><button id="reset" disabled>Annuler la décision</button><button id="nextPending">Suggestion suivante à décider</button></div>
+<p class="muted">Le score affiché est une similarité d’embeddings, pas une probabilité de justesse. Un nom doit être validé visuellement.</p>
+</aside>
+</main>
+<dialog id="exportDialog"><h2>Décisions et complétude par planche</h2><p>Ce fichier est un brouillon métier lié aux pixels et au paquet d’origine. Son import dans un nouveau corpus et son utilisation pour entraîner restent une étape distincte.</p><textarea id="exportText" readonly aria-label="JSON des décisions"></textarea><div class="bar"><button id="download" class="primary">Télécharger le JSON</button><button id="closeExport">Fermer</button></div></dialog>
+<script src="data.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const canvas=$('planche'),ctx=canvas.getContext('2d'),crop=$('zoomCrop'),cropCtx=crop.getContext('2d');
+const initial=()=>({schema_version:'glyph-coverage-decisions.v1',packet_sha256:DATA.packet_sha256,reviewer:'',pages:Object.fromEntries(DATA.pages.map(p=>[p.group,{source_image_pixel_sha256:p.source_image_pixel_sha256,decisions:{},manual_items:[],coverage_status:'unreviewed',full_page_inspected:false,reviewed_at:null,reviewed_by:null,duplicate_resolutions:{}}]))});
+let review=initial(),pageIndex=0,selected=null,image=null,adding=false,start=null,loading=0;
+const page=()=>DATA.pages[pageIndex],record=()=>review.pages[page().group];
+const items=()=>[...page().known,...page().candidates,...record().manual_items];
+const decision=z=>record().decisions[z.id];
+const state=z=>decision(z)?.status||(z.kind==='known'?'original':'pending');
+const bbox=z=>decision(z)?.status==='accepted'?decision(z).bbox:z.bbox;
+const className=z=>decision(z)?.class_name||z.class_name||z.suggested_class||'';
+const pending=()=>[...page().candidates,...record().manual_items].filter(z=>!decision(z)).length;
+function message(text){$('status').textContent=text;}
+function requireReviewer(){if(!$('reviewer').value.trim())throw Error('Indiquez le relecteur avant de valider une décision.');review.reviewer=$('reviewer').value.trim();}
+function overlap(a,b){const x=Math.max(0,Math.min(a[0]+a[2],b[0]+b[2])-Math.max(a[0],b[0])),y=Math.max(0,Math.min(a[1]+a[3],b[1]+b[3])-Math.max(a[1],b[1])),inter=x*y;return inter/(a[2]*a[3]+b[2]*b[3]-inter);}
+function validBox(box,p){return Array.isArray(box)&&box.length===4&&box.every(Number.isInteger)&&box[0]>=0&&box[1]>=0&&box[2]>0&&box[3]>0&&box[0]+box[2]<=p.width&&box[1]+box[3]<=p.height;}
+function invalidate(){const r=record();r.full_page_inspected=false;if(r.coverage_status==='complete')r.coverage_status='incomplete';r.reviewed_at=null;r.reviewed_by=null;}
+function render(){
+ if(!image)return;
+ ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0);
+ for(const z of page().ignored){const [x,y,w,h]=z.bbox;ctx.strokeStyle='#74838d';ctx.lineWidth=2;ctx.setLineDash([4,4]);ctx.strokeRect(x,y,w,h);ctx.setLineDash([]);}
+ for(const z of items()){
+  if((z.kind==='known'&&!$('showKnown').checked)||(z.kind==='candidate'&&!$('showCandidates').checked)||['rejected','deleted'].includes(state(z)))continue;
+  const [x,y,w,h]=bbox(z);ctx.strokeStyle=state(z)==='accepted'?'#178759':z.kind==='known'?'#1976ad':'#e08814';ctx.lineWidth=selected?.id===z.id?4:2;ctx.strokeRect(x,y,w,h);
+  if(selected?.id===z.id){ctx.fillStyle='#ffffffdc';ctx.fillRect(x,Math.max(0,y-21),Math.min(180,w+100),21);ctx.fillStyle='#183e53';ctx.font='14px system-ui';ctx.fillText(className(z)||'Nom à préciser',x+2,Math.max(15,y-5));}
+ }
+ const zoom=$('zoom').value==='fit'?Math.min(1,Math.max(300,$('viewport').clientWidth-8)/page().width):Number($('zoom').value);
+ canvas.style.width=page().width*zoom+'px';canvas.style.height=page().height*zoom+'px';
+ $('progress').textContent=`${pageIndex+1}/${DATA.pages.length} · ${page().known.length} existantes · ${pending()} suggestions à décider`;
+ $('inspected').checked=record().full_page_inspected;$('coverage').value=record().coverage_status;
+ $('coverageSummary').textContent=record().reviewed_by?`Attestation : ${record().reviewed_by}`:'Aucune attestation de complétude';
+ renderList();renderDuplicates();
+}
+function renderList(){
+ const list=$('itemList');list.replaceChildren();
+ for(const z of items().filter(z=>z.kind===$('kind').value)){
+  const status=state(z),filter=$('filter').value;
+  if(filter!=='all'&&(filter==='rejected'?!['rejected','deleted'].includes(status):status!==filter))continue;
+  const b=document.createElement('button');b.className='item'+(selected?.id===z.id?' selected':'');
+  b.textContent=`${z.confirmed_target?'★ ':''}${className(z)||'Nom à préciser'} · ${status==='original'?'existante':status==='pending'?'à décider':status==='accepted'?'validée':'écartée'} · ${z.sources?.join(' + ')||z.id}`;
+  b.onclick=()=>select(z);list.append(b);
+ }
+ if(!list.children.length)list.textContent='Aucune région dans ce filtre.';
+}
+function finalItems(p,r){return p.known.filter(z=>r.decisions[z.id]?.status!=='deleted').map(z=>({...z,...r.decisions[z.id]})).concat(p.candidates.concat(r.manual_items).filter(z=>r.decisions[z.id]?.status==='accepted').map(z=>({...z,...r.decisions[z.id]})));}
+function duplicatePairs(p,r){const out=[...p.duplicate_pairs],final=finalItems(p,r),existing=new Set(out.map(z=>[z.a,z.b].sort().join('::')));for(let j=0;j<final.length;j++)for(const b of final.slice(j+1)){const a=final[j],identity=[a.id,b.id].sort().join('::');if(!existing.has(identity)&&a.class_name===b.class_name&&overlap(a.bbox,b.bbox)>=.8)out.push({id:'dynamic-'+identity,a:a.id,b:b.id,iou:overlap(a.bbox,b.bbox),dynamic:true});}return out;}
+function renderDuplicates(){
+ const out=$('duplicates');out.replaceChildren();
+ for(const pair of duplicatePairs(page(),record())){
+  const box=document.createElement('div');box.className='duplicate';
+  const text=document.createElement('div');text.textContent=`Doublon possible : ${pair.a} / ${pair.b}, IoU ${pair.iou.toFixed(3)}. Vérifiez s’il s’agit du même glyphe ou de deux objets distincts.`;
+  const sel=document.createElement('select');sel.setAttribute('aria-label','Résoudre le doublon '+pair.id);
+  for(const [value,label] of [['','À vérifier'],['keep_a','Conserver la première, supprimer la seconde'],['keep_b','Conserver la seconde, supprimer la première'],['distinct','Deux glyphes distincts : conserver les deux']]){const op=document.createElement('option');op.value=value;op.textContent=label;sel.append(op);}
+  sel.value=record().duplicate_resolutions[pair.id]||'';
+  sel.onchange=()=>{try{
+    requireReviewer();invalidate();
+    const old=record().duplicate_resolutions[pair.id];
+    if(old==='keep_a'||old==='keep_b'){const removed=pair[old==='keep_a'?'b':'a'];if(record().decisions[removed]?.note==='Suppression du doublon '+pair.id)delete record().decisions[removed];}
+    if(!sel.value)delete record().duplicate_resolutions[pair.id];else record().duplicate_resolutions[pair.id]=sel.value;
+    if(sel.value==='keep_a'||sel.value==='keep_b'){const id=pair[sel.value==='keep_a'?'b':'a'];record().decisions[id]={status:items().find(z=>z.id===id).kind==='known'?'deleted':'rejected',note:'Suppression du doublon '+pair.id,reviewed_at:new Date().toISOString(),reviewed_by:review.reviewer};}
+    render();message('Décision de doublon enregistrée dans cette session.');
+  }catch(e){message(e.message);renderDuplicates();}};
+  const show=document.createElement('button');show.textContent='Voir les boîtes';show.onclick=()=>{$('kind').value='known';$('filter').value='all';const z=items().find(z=>z.id===pair.a);kind.value=z.kind;select(z);};
+  box.append(text,sel,show);out.append(box);
+ }
+}
+function select(z){
+ selected=z;$('selectedTitle').textContent=z.confirmed_target?'Tête S14 confirmée : valider le rectangle':z.kind==='known'?'Annotation existante':z.id.startsWith('manual-')?'Ajout manuel':'Suggestion à vérifier';
+ const explanations=[z.note||'',z.annotation_keys?'Références : '+z.annotation_keys.join(', '):'',...(z.evidence||[]).map(e=>`${e.source} : ${e.class_name}, similarité ${e.similarity.toFixed(3)}, boîte ${e.bbox.join(', ')}`)];$('detail').textContent=explanations.filter(Boolean).join(' · ');
+ $('class').value=className(z);['x','y','w','h'].forEach((key,j)=>$(key).value=bbox(z)[j]);$('notes').value=decision(z)?.note||'';
+ for(const key of ['accept','reject','reset'])$(key).disabled=false;
+ $('reject').textContent=z.kind==='known'?'Supprimer cette annotation':'Écarter la suggestion';
+ if(image){const [x,y,w,h]=bbox(z),pad=20,ax=Math.max(0,x-pad),ay=Math.max(0,y-pad),cw=Math.min(page().width,x+w+pad)-ax,ch=Math.min(page().height,y+h+pad)-ay,scale=Math.min(crop.width/cw,crop.height/ch),ox=(crop.width-cw*scale)/2,oy=(crop.height-ch*scale)/2;cropCtx.clearRect(0,0,crop.width,crop.height);cropCtx.drawImage(image,ax,ay,cw,ch,ox,oy,cw*scale,ch*scale);cropCtx.strokeStyle='#e08814';cropCtx.lineWidth=2;cropCtx.strokeRect(ox+(x-ax)*scale,oy+(y-ay)*scale,w*scale,h*scale);}
+ render();
+}
+function setDecision(status){try{
+ requireReviewer();if(!selected)return;
+ const d={status,note:$('notes').value.trim(),reviewed_by:review.reviewer,reviewed_at:new Date().toISOString()};
+ if(status==='accepted'){d.bbox=['x','y','w','h'].map(id=>Number($(id).value));if(!validBox(d.bbox,page()))throw Error('La boîte doit être entière, positive et à l’intérieur de la planche.');d.class_name=$('class').value.trim();if(!DATA.class_names.includes(d.class_name))throw Error('Choisissez une classe du catalogue. Pour un élément hors catalogue, laissez la planche incomplète et indiquez-le en note.');}
+ invalidate();record().decisions[selected.id]=d;render();select(selected);message('Décision enregistrée dans cette session. Pensez à exporter.');
+}catch(e){message(e.message);}}
+function loadPage(){
+ const p=page(),token=++loading;selected=null;image=null;adding=false;start=null;$('draw').textContent='Ajouter une boîte';$('selectedTitle').textContent='Sélectionner une région';$('detail').textContent='';cropCtx.clearRect(0,0,crop.width,crop.height);for(const key of ['accept','reject','reset'])$(key).disabled=true;
+ $('page').value=String(pageIndex);canvas.width=p.width;canvas.height=p.height;
+ const nextImage=new Image();nextImage.onload=()=>{if(token!==loading)return;image=nextImage;render();if(p.title==='S14')select(p.candidates.find(z=>z.confirmed_target));};nextImage.onerror=()=>message('Image introuvable : conserver le dossier images à côté de index.html.');nextImage.src=p.image;
+}
+function validateDraft(d){
+ if(!d||d.schema_version!=='glyph-coverage-decisions.v1'||d.packet_sha256!==DATA.packet_sha256)throw Error('Cet export appartient à un autre paquet de revue.');
+ if(typeof d.reviewer!=='string'||d.reviewer.length>160||!d.pages||typeof d.pages!=='object'||Object.keys(d.pages).length!==DATA.pages.length)throw Error('Identités de revue invalides.');
+ for(const p of DATA.pages){
+  const r=d.pages[p.group];if(!r||r.source_image_pixel_sha256!==p.source_image_pixel_sha256||!r.decisions||typeof r.decisions!=='object'||Array.isArray(r.decisions))throw Error('Identité des pixels ou décisions invalides.');
+  if(!r.duplicate_resolutions||typeof r.duplicate_resolutions!=='object'||Array.isArray(r.duplicate_resolutions))throw Error('Décisions de doublons invalides.');
+  if(!Array.isArray(r.manual_items)||r.manual_items.length>10000)throw Error('Ajouts manuels invalides.');
+  const all=[...p.known,...p.candidates,...r.manual_items],ids=new Set(all.map(z=>z.id));if(ids.size!==all.length)throw Error('Identifiants de régions répétés.');
+  for(const z of r.manual_items)if(typeof z.id!=='string'||!z.id.startsWith('manual-')||z.kind!=='candidate'||!validBox(z.bbox,p))throw Error('Boîte manuelle invalide.');
+  for(const [id,x] of Object.entries(r.decisions)){
+   const z=all.find(z=>z.id===id);if(!z||!x||!['accepted','rejected','deleted'].includes(x.status))throw Error('Décision inconnue.');
+   if((x.status==='deleted'&&z.kind!=='known')||(x.status==='rejected'&&z.kind==='known'))throw Error('Suppression ou rejet incompatible avec la région.');
+   if(!d.reviewer.trim())throw Error('Relecteur requis pour les décisions.');
+   if(x.status==='accepted'&&(!DATA.class_names.includes(x.class_name)||!validBox(x.bbox,p)))throw Error('Classe ou boîte acceptée invalide.');
+  }
+  if(!['unreviewed','incomplete','complete'].includes(r.coverage_status))throw Error('Couverture invalide.');
+  if(r.coverage_status!=='unreviewed'&&!d.reviewer.trim())throw Error('Relecteur requis pour la couverture.');
+  if(r.coverage_status==='complete'){
+   if(r.full_page_inspected!==true||typeof r.reviewed_at!=='string'||!r.reviewed_at||typeof r.reviewed_by!=='string'||!r.reviewed_by.trim()||[...p.candidates,...r.manual_items].some(z=>!r.decisions[z.id]))throw Error('Planche complète avec inspection ou suggestions non résolues.');
+   const final=finalItems(p,r);
+   for(const z of p.candidates)if(z.confirmed_target&&!final.some(d=>d.class_name===z.suggested_class&&overlap(d.bbox,z.bbox)>=.5))throw Error('La tête confirmée de S14 doit avoir une boîte validée avant attestation.');
+   for(const pair of p.duplicate_pairs){const choice=r.duplicate_resolutions?.[pair.id];if(!['keep_a','keep_b','distinct'].includes(choice))throw Error('Doublon non résolu.');if(choice!=='distinct'&&r.decisions[pair[choice==='keep_a'?'b':'a']]?.status!=='deleted')throw Error('Suppression du doublon manquante.');if(choice!=='distinct'&&r.decisions[pair[choice==='keep_a'?'a':'b']]?.status==='deleted')throw Error('Les deux boîtes du doublon sont supprimées.');if(choice==='distinct'&&[pair.a,pair.b].some(id=>r.decisions[id]?.status==='deleted'))throw Error('Une boîte déclarée distincte est supprimée.');}
+   for(const pair of duplicatePairs(p,r).filter(z=>z.dynamic))if(r.duplicate_resolutions[pair.id]!=='distinct')throw Error('Une nouvelle paire de boîtes superposées reste à résoudre.');
+  }
+ }
+ return true;
+}
+for(const [i,p] of DATA.pages.entries()){const option=document.createElement('option');option.value=String(i);option.textContent=p.title+' · '+p.analysis_ids[0].slice(0,8);$('page').append(option);}
+for(const name of DATA.class_names){const option=document.createElement('option');option.value=name;$('classes').append(option);}
+$('page').onchange=()=>{pageIndex=Number($('page').value);loadPage();};$('previous').onclick=()=>{pageIndex=(pageIndex-1+DATA.pages.length)%DATA.pages.length;loadPage();};$('next').onclick=()=>{pageIndex=(pageIndex+1)%DATA.pages.length;loadPage();};
+for(const id of ['kind','filter','showKnown','showCandidates','zoom'])$(id).onchange=()=>render();
+$('reviewer').oninput=()=>{review.reviewer=$('reviewer').value.trim();};
+$('accept').onclick=()=>setDecision('accepted');$('reject').onclick=()=>setDecision(selected?.kind==='known'?'deleted':'rejected');
+$('reset').onclick=()=>{if(!selected)return;invalidate();delete record().decisions[selected.id];render();select(selected);message('Décision annulée.');};
+$('draw').onclick=()=>{adding=!adding;$('draw').textContent=adding?'Annuler le tracé':'Ajouter une boîte';message(adding?'Tracez un rectangle sur la planche, puis validez la boîte et le nom.':'Ajout annulé.');};
+function position(e){const r=canvas.getBoundingClientRect();return [Math.max(0,Math.min(page().width,Math.round((e.clientX-r.left)*page().width/r.width))),Math.max(0,Math.min(page().height,Math.round((e.clientY-r.top)*page().height/r.height)))];}
+canvas.onpointerdown=e=>{const [x,y]=position(e);if(adding){start=[x,y];canvas.setPointerCapture(e.pointerId);return;}const matches=items().filter(z=>!['deleted','rejected'].includes(state(z))&&((z.kind==='known'&&$('showKnown').checked)||(z.kind==='candidate'&&$('showCandidates').checked))).filter(z=>{const b=bbox(z);return x>=b[0]&&y>=b[1]&&x<=b[0]+b[2]&&y<=b[1]+b[3];}).sort((a,b)=>bbox(a)[2]*bbox(a)[3]-bbox(b)[2]*bbox(b)[3]);if(matches.length){$('kind').value=matches[0].kind;$('filter').value='all';select(matches[0]);}};
+canvas.onpointermove=e=>{if(!start)return;render();const end=position(e);ctx.strokeStyle='#9e42a2';ctx.lineWidth=3;ctx.strokeRect(start[0],start[1],end[0]-start[0],end[1]-start[1]);};
+canvas.onpointerup=e=>{if(!start)return;const end=position(e),b=[Math.min(start[0],end[0]),Math.min(start[1],end[1]),Math.abs(end[0]-start[0]),Math.abs(end[1]-start[1])];start=null;if(b[2]<3||b[3]<3){render();message('Tracez une boîte d’au moins trois pixels.');return;}const item={id:'manual-'+crypto.randomUUID(),kind:'candidate',bbox:b,suggested_class:'',sources:['Ajout manuel'],note:'Région ajoutée lors de l’inspection complète.'};invalidate();record().manual_items.push(item);adding=false;$('draw').textContent='Ajouter une boîte';$('kind').value='candidate';$('filter').value='all';select(item);};
+canvas.onpointercancel=()=>{start=null;render();};
+$('inspected').onchange=()=>{record().full_page_inspected=$('inspected').checked;if(!record().full_page_inspected&&record().coverage_status==='complete')record().coverage_status='incomplete';render();};
+$('coverage').onchange=()=>{const r=record(),prior=r.coverage_status,priorDate=r.reviewed_at,priorBy=r.reviewed_by;try{const choice=$('coverage').value;if(choice!=='unreviewed')requireReviewer();if(choice==='complete'){if(!r.full_page_inspected)throw Error('Inspectez toute la planche et cochez l’attestation.');if(pending())throw Error(`${pending()} suggestions restent à décider.`);if(page().duplicate_pairs.some(p=>!r.duplicate_resolutions[p.id]))throw Error('Résolvez le doublon avant d’attester la complétude.');}r.coverage_status=choice;r.reviewed_at=choice==='unreviewed'?null:new Date().toISOString();r.reviewed_by=choice==='unreviewed'?null:review.reviewer;validateDraft(review);render();message('État de couverture enregistré dans cette session.');}catch(e){r.coverage_status=prior;r.reviewed_at=priorDate;r.reviewed_by=priorBy;render();message(e.message);}};
+$('export').onclick=()=>{try{validateDraft(review);$('exportText').value=JSON.stringify({...review,exported_at:new Date().toISOString()},null,2);$('exportDialog').showModal();}catch(e){message(e.message);}};
+$('download').onclick=()=>{const blob=new Blob([$('exportText').value],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='glyph-coverage-decisions-20261004.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};$('closeExport').onclick=()=>$('exportDialog').close();
+$('import').onchange=async()=>{try{const f=$('import').files[0];if(!f)return;if(f.size>10*1024*1024)throw Error('Export trop volumineux.');const d=JSON.parse(await f.text());validateDraft(d);review=d;$('reviewer').value=d.reviewer;loadPage();message('Décisions reprises. Le corpus reste inchangé.');}catch(e){message(e.message);}finally{$('import').value='';}};
+window.addEventListener('beforeunload',e=>{if(Object.values(review.pages).some(r=>Object.keys(r.decisions).length||r.manual_items.length||r.coverage_status!=='unreviewed')){e.preventDefault();e.returnValue='';}});
+loadPage();
+</script>
+</html>
+
+
+

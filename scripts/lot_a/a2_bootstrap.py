@@ -313,6 +313,7 @@ def compute_deployed_predictions(
         oof = cache["oof"]
         oof_row_ids = list(oof["row_id"])
         oof_component_ids = list(oof.get("component_id", []))
+        oof_class_labels = list(oof.get("class_label", []))
         base_features = oof["base_features"].to(torch.float32)
 
         wanted_indices = [i for i, rid in enumerate(oof_row_ids) if rid in unique_meta]
@@ -333,6 +334,12 @@ def compute_deployed_predictions(
                     raise common.LotASchemaError(
                         f"row_id {row_id!r}: provenance_component mismatch — cache="
                         f"{oof_component_ids[idx]!r} prediction_rows={meta['component']!r}"
+                    )
+                if oof_class_labels and int(oof_class_labels[idx]) != int(meta["label"]):
+                    raise common.LotASchemaError(
+                        f"row_id {row_id!r}: research label mismatch (tolerance 0) — "
+                        f"prediction_rows.label={meta['label']!r} "
+                        f"oof.class_label={oof_class_labels[idx]!r}"
                     )
                 if row_id in per_row:
                     raise common.LotASchemaError(
@@ -1039,6 +1046,27 @@ def build_statistical_report(
 # ---------------------------------------------------------------------------
 
 
+def assert_runtime_files_unchanged(runtime_dir: Path, sha256_at_load: dict[str, str]) -> None:
+    """Re-hash the 3 deployed runtime artifacts directly from disk (no
+    DeployedRuntime re-instantiation / re-load needed) and raise if any
+    drifted from sha256_at_load. Cheap (3 file hashes): used as the
+    end-of-pipeline guard, see assert_unchanged scope note below."""
+    current = {
+        "config": common.sha256_file(runtime_dir / "config.json"),
+        "projection": common.sha256_file(runtime_dir / "weights" / "projection.pt"),
+        "prototypes": common.sha256_file(runtime_dir / "weights" / "prototypes.pt"),
+    }
+    drifted = {
+        name: {"loaded": sha256_at_load[name], "now": current[name]}
+        for name in current
+        if current[name] != sha256_at_load[name]
+    }
+    if drifted:
+        raise common.RuntimeDriftError(
+            f"deployed runtime artifacts changed after the full A2 pipeline: {drifted}"
+        )
+
+
 def build_core_report(
     rows: list[dict],
     v9_caches_dir: Path,
@@ -1055,6 +1083,18 @@ def build_core_report(
         paired_records, bootstrap_seed_base, bootstrap_draws
     )
 
+    # Post-bootstrap guard (argos review round 2, item 5): compute_deployed_
+    # predictions() already asserts unchanged immediately before and after
+    # its own IO/inference loop (the only part of this pipeline that
+    # exercises the runtime files). Everything from build_paired_records
+    # onward is pure CPU arithmetic over already-extracted 0/1 outcomes and
+    # never touches runtime_dir again — so this final check is redundant
+    # with the guard already inside compute_deployed_predictions, but is
+    # added anyway for defense-in-depth / paranoia around the WHOLE
+    # pipeline's wall-clock window, matching a1_flips.py's/preflight.py's
+    # before/after-the-whole-run scope rather than only wrapping the IO.
+    assert_runtime_files_unchanged(runtime_dir, deployed_meta["sha256_at_load"])
+
     report: dict[str, Any] = {
         "schema_version": "lot-a-a2-v1",
         "git_sha": get_git_sha(),
@@ -1066,7 +1106,18 @@ def build_core_report(
         "runtime_guard": {
             "sha256_at_load": deployed_meta["sha256_at_load"],
             "verified_unchanged_before_analysis": True,
-            "verified_unchanged_after_analysis": True,
+            "verified_unchanged_after_deployed_prediction_io": True,
+            "verified_unchanged_after_full_pipeline": True,
+            "scope_note": (
+                "3 checks total: (1) immediately after DeployedRuntime loads, before any "
+                "fold cache IO/inference — inside compute_deployed_predictions; (2) "
+                "immediately after the last predict_topk() call, before returning from "
+                "compute_deployed_predictions — still the only stage that touches "
+                "runtime_dir; (3) here, at the very end of build_core_report, after all "
+                "statistics (pure CPU arithmetic, no further runtime_dir access) — "
+                "redundant with (2) by construction but kept for defense-in-depth over "
+                "the pipeline's full wall-clock window."
+            ),
         },
         "deployed_prediction_coverage": {
             "per_fold_coverage": deployed_meta["per_fold_coverage"],
@@ -1192,8 +1243,11 @@ def render_markdown(report: dict) -> str:
     )
     lines.append(
         f"- Inchange avant analyse : {guard['verified_unchanged_before_analysis']} ; "
-        f"inchange apres analyse : {guard['verified_unchanged_after_analysis']}"
+        f"inchange apres l'IO/inference deployee : "
+        f"{guard['verified_unchanged_after_deployed_prediction_io']} ; "
+        f"inchange apres le pipeline complet : {guard['verified_unchanged_after_full_pipeline']}"
     )
+    lines.append(f"- Perimetre exact : {guard['scope_note']}")
     lines.append("")
 
     lines.append("## Couverture des predictions deployees")
