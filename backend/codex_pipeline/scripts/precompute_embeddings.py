@@ -407,6 +407,7 @@ def main():
         "image_count": len(metadata),
         "hidden_dim": hidden_dim,
         "image_size": cfg["data"]["image_size"],
+        "preprocessing": PREPROCESSING_VERSION,
         "torch_version": str(torch.__version__),
     }
     prov_path = Path(str(out_path) + ".prov.json")

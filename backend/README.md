@@ -6,6 +6,9 @@ Default runtime: `http://localhost:7117` (`HOST=127.0.0.1`, `PORT=7117`).
 
 ## Run
 
+The supported interpreter is Python 3.11 (`backend/.python-version`, CI and
+both installers refuse other minor versions).
+
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -121,9 +124,39 @@ backend/annotations/<analysis_id>/
 - writes through a temporary directory before replacing the target folder;
 - no longer writes directly to `training_data/Elements` (the parameter remains for backward compatibility).
 
-Admin review decisions are stored separately in `backend/annotations/review-index.json` by `backend/services/annotation_review.py`. Review decisions are element-level (`analysis_id:index`), while analyses are display groups. Existing annotations with no review entry appear as `pending`; only canonical, non-stale elements whose review status is exactly `approved` are yielded for retraining. Missing folders, metadata rows, crops, orphan manifest entries, and stale source fingerprints are diagnosed and excluded from training.
+Admin review decisions are stored separately in the SQLite database `backend/annotations/review-state.sqlite3` by `backend/services/annotation_review.py` (decisions plus a full revision history). Review decisions are element-level (`analysis_id:index`), while analyses are display groups. Existing annotations with no review entry appear as `pending`; only canonical, non-stale elements whose review status is exactly `approved` are yielded for retraining. Missing folders, metadata rows, crops, orphan manifest entries, and stale source fingerprints are diagnosed and excluded from training.
 
-`POST /admin/annotations/<analysis_id>/<index>/modify` can correct a submitted element after review. It validates/sanitizes `class_name`, clamps and normalizes `[x, y, width, height]`, regenerates the crop from the stored `image.png`, rewrites metadata only after the crop exists, and records a fresh manifest decision. By default, a modification becomes `pending`; pass `approve_after_save: true` (or `status: "approved"`) only when the corrected evidence should be immediately trainable.
+`POST /admin/annotations/<analysis_id>/<index>/modify` can correct a submitted element after review. It validates/sanitizes `class_name`, clamps and normalizes `[x, y, width, height]`, regenerates the crop from the stored `image.png`, rewrites metadata only after the crop exists, and records a fresh review decision (new revision). By default, a modification becomes `pending`; pass `approve_after_save: true` (or `status: "approved"`) only when the corrected evidence should be immediately trainable.
+
+### Review store migration and archive merge
+
+Older installations kept decisions in `backend/annotations/review-index.json`. That file is now read-only: the admin queue still displays it, but every review write and training launch is refused until it is imported explicitly. Run the steps in this order (each script previews unless `--apply` is given):
+
+```bash
+# 1. Import review-index.json into review-state.sqlite3 (verified backup in .review-backups/).
+#    The preview reports valid_decisions, stale_decisions and stale_keys.
+backend/.venv/bin/python scripts/migrate_annotation_reviews.py --annotations-dir backend/annotations
+backend/.venv/bin/python scripts/migrate_annotation_reviews.py --annotations-dir backend/annotations --apply
+# 2. Optional, before moving the store to another computer: make crop paths relative.
+#    Refuses to run until step 1 created the database.
+backend/.venv/bin/python scripts/upgrade_annotation_review_portability.py --annotations-dir backend/annotations --apply
+```
+
+Only decisions whose stored source fingerprint still matches the submitted annotation (current or legacy path-bound form, crop unchanged) are imported as valid. Anything else keeps its original fingerprint and stays stale: shown as `pending`, never trainable, until it is reviewed again. Path-bound legacy fingerprints only verify on the computer that wrote them, so migrate before moving a store.
+
+To add a reviewed ZIP archive to an installation:
+
+```bash
+# 1. Import the archive into its own isolated store (writes review-index.json there).
+#    --re-attest-verified re-creates decisions after checking labels, boxes and source pixels.
+backend/.venv/bin/python scripts/import_annotation_archive.py archive.zip --output /tmp/archive-store --apply
+# 2. Migrate that isolated store to SQLite.
+backend/.venv/bin/python scripts/migrate_annotation_reviews.py --annotations-dir /tmp/archive-store --apply
+# 3. Merge it into the application store (refuses analysis-ID or decision collisions; backs up the target DB).
+backend/.venv/bin/python scripts/merge_annotation_archive.py --source /tmp/archive-store --target backend/annotations --apply
+```
+
+`scripts/audit_annotation_stores.py` and `scripts/freeze_business_test_set.py` read decisions through the same store (SQLite first, JSON only for legacy stores). If the review store fails while analysing a page, `/segment` still answers with model output and reports `provenance.corrections_unavailable: true`.
 
 ## Image upload errors
 
@@ -160,7 +193,7 @@ If local classifier assets are absent, backend ML requests fail with HTTP `503` 
 ## Tests
 
 ```bash
-backend/.venv/bin/python -m pytest backend/tests scripts/test_export_annotations.py scripts/test_export_approved_annotations.py scripts/test_retrain_scripts.py scripts/test_promote_model.py
+backend/.venv/bin/python -m pytest backend/tests scripts/test_export_annotations.py scripts/test_export_approved_annotations.py scripts/test_retrain_scripts.py scripts/test_import_original.py scripts/test_promote_model.py
 ```
 
 ## Retraining
@@ -181,3 +214,118 @@ Candidates are stored under `backend/model_registry/versions/<version_id>/`, wit
 The normal Training tab uses `scripts/retrain_local.py` through the backend Python on Linux/macOS and native Windows. Jobs are guarded against concurrent launches. Status and logs are stored under `backend/training_runs/`. Unknown fields, invalid parameters, nonlocal requests and incompatible `MODEL_DIR` overrides are rejected.
 
 See [the operator guide](../docs/admin-model-retraining-workflow.md) for permissions and advanced snapshot mode.
+
+### Advanced: cumulative snapshot mode (research)
+
+The canonical cumulative S/14 research flow first builds an immutable
+snapshot and passes all three bound inputs explicitly:
+
+```bash
+backend/.venv/bin/python scripts/build_training_snapshot.py --dry-run --exclude-conflicts --json
+# The current corpus is intentionally rejected because heldout targets are underfilled.
+# Inspect the research-only plan without writing:
+backend/.venv/bin/python scripts/build_training_snapshot.py --dry-run \
+  --exclude-conflicts --allow-underfilled-holdouts --json
+
+# Materialize only a future strict plan that passes without the override:
+backend/.venv/bin/python scripts/build_training_snapshot.py \
+  --parent-manifest backend/training_corpus/snapshots/<snapshot-id>/snapshot_manifest.json \
+  --exclude-conflicts --json
+
+bash scripts/retrain.sh \
+  --elements-dir backend/training_corpus/snapshots/<snapshot-id>/Elements \
+  --approved-manifest backend/training_corpus/snapshots/<snapshot-id>/snapshot_manifest.json \
+  --metadata-csv backend/training_corpus/snapshots/<snapshot-id>/metadata.csv \
+  --backbone-manifest backend/training_corpus/backbone-pins/dinov2-vits14-local.json
+```
+
+For an immutable snapshot, both scripts run:
+
+1. validate the supplied `training-snapshot.v2` manifest, metadata, checksums,
+   persisted splits, and exact 286-class runtime order
+2. `backend/codex_pipeline/scripts/precompute_embeddings.py` → version-local `features.pt`
+3. `backend/codex_pipeline/scripts/train.py` → `backend/model_registry/versions/<version_id>/checkpoints`
+4. `backend/codex_pipeline/scripts/evaluate.py --prototype-split train --export-prototypes` → `backend/model_registry/versions/<version_id>/prototypes/prototypes.pt`
+5. `backend/codex_pipeline/scripts/export_model.py` → `backend/model_registry/versions/<version_id>/runtime/`, `manifest.json`, `model-card.md`, and `checksums.sha256`
+
+The legacy no-argument flow still exports current approvals for local UI smoke
+testing, but it is not the production promotion contract. `locked_test` is
+reserved for the later non-regression report and never enters prototypes.
+
+Dry-run the explicit stage list without training:
+
+```bash
+bash scripts/retrain.sh --dry-run
+pwsh -NoProfile -File scripts/retrain.ps1 -DryRun
+```
+
+No MobileSAM/segmentation retraining is performed by `scripts/retrain.*`.
+
+Retraining/export is safe by default: it creates a candidate package and refuses
+direct writes to `backend/codex_model/` unless the bootstrap-only
+`--allow-runtime-write` flag is used by install/dev setup. Activate a candidate
+with the promotion tool:
+
+```bash
+backend/.venv/bin/python scripts/promote_model.py <version_id> --dry-run
+backend/.venv/bin/python scripts/promote_model.py <version_id>
+```
+
+## Capture the historical runtime as `original`
+
+Before the first promotion, capture the existing local runtime once with an
+explicit version ID. Always inspect the dry-run first, then repeat the exact
+command without `--dry-run` only after its three hashes and destinations are
+expected:
+
+```bash
+backend/.venv/bin/python scripts/import_original.py \
+  --registry-dir backend/model_registry \
+  --runtime-dir backend/codex_model \
+  --version-id 20260810T000000Z-nogit-original --dry-run --json
+
+backend/.venv/bin/python scripts/import_original.py \
+  --registry-dir backend/model_registry \
+  --runtime-dir backend/codex_model \
+  --version-id 20260810T000000Z-nogit-original --json
+```
+
+The import takes the same exclusive lock as promotion, copies the three runtime
+artifacts through a private staging directory, and writes an immutable package
+whose provenance names the real runtime, never the staging path. If
+`promoted` is unset, it is initialized to `original`; an already valid promoted
+version remains promoted. A successful JSON response may contain `warnings` if
+private staging cleanup failed after publication. Treat that as a bounded local
+residue, not as a failed import.
+
+If the command reports an error, a warning, a held lock, a staging residue, or
+an orphaned version directory, stop manual imports/promotions and stop the
+backend process before investigating. Inspect `index.json`, the version's
+`manifest.json` and `checksums.sha256`, and the exact reported paths. Do not
+delete lock, staging, or version directories automatically; remove them
+manually only after confirming no import, promotion, or training process is
+running and the recorded hashes are understood.
+
+Promotion validates the registered version, rejects unsafe artifact paths,
+checks index-pinned manifest/checksum hashes, verifies `checksums.sha256`,
+snapshots current runtime files under
+`backend/model_registry/snapshots/`, atomically copies the candidate runtime
+files into `backend/codex_model/`, verifies post-copy hashes, and records
+`original`/`previous`/`promoted` pointers in `backend/model_registry/index.json`.
+If a process is interrupted mid-promotion, `backend/model_registry/promotion_in_progress.json`
+remains as a recovery marker and is surfaced by `/admin/training/summary`.
+Promotion refuses to run with an ambient `MODEL_DIR` override unless `--runtime-dir`
+is supplied explicitly, because otherwise the backend may load weights outside
+the package being promoted.
+
+`export_model.py` loads trusted local `.pt` prototype artifacts produced by the
+training pipeline. Do not point it at untrusted pickle/PyTorch files.
+
+Rollback uses the same verification/snapshot path:
+
+```bash
+backend/.venv/bin/python scripts/promote_model.py --rollback --dry-run
+backend/.venv/bin/python scripts/promote_model.py --rollback
+```
+
+A lockfile at `backend/.retrain.lock` prevents concurrent retrains. Restart the Flask backend after promotion or rollback so it loads the selected runtime weights; candidate creation alone does not change predictions.

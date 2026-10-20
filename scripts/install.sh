@@ -14,21 +14,22 @@ fail() { printf '\n[install] ERROR: %s\n' "$*" >&2; exit 1; }
 # --- Stage 0: Pre-flight checks ---
 log "Stage 0/5: pre-flight checks"
 
-# Find Python 3.10 or 3.11 (refuse 3.12+, 3.14, system fallbacks)
+# Find Python 3.11 (refuse other minor versions and unverified fallbacks)
 PYTHON=""
-for candidate in python3.11 python3.10; do
+PYVER=""
+for candidate in python3.11 python3 python; do
   if command -v "$candidate" >/dev/null 2>&1; then
-    PYTHON="$candidate"; break
+    candidate_version=$("$candidate" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
+    if [ "$candidate_version" = "3.11" ]; then
+      PYTHON="$candidate"
+      PYVER="$candidate_version"
+      break
+    fi
   fi
 done
-[ -n "$PYTHON" ] || fail "Need python3.10 or python3.11. Install: sudo apt install python3.11 python3.11-venv"
+[ -n "$PYTHON" ] || fail "Need Python 3.11 on PATH (for example: uv python install 3.11)."
 
-# Verify version (defense against shims)
-PYVER=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-case "$PYVER" in
-  3.10|3.11) ;;
-  *) fail "Found $PYTHON but reports version $PYVER. Need 3.10 or 3.11." ;;
-esac
+# Version was read from the selected executable above to reject incompatible shims.
 log "Using $PYTHON ($PYVER)"
 
 command -v node >/dev/null 2>&1 || fail "Need Node.js 22.22 or newer. Install Node.js, reopen the shell, then re-run this script."
@@ -51,6 +52,8 @@ log "Stage 1/5: venv at backend/.venv"
 if [ ! -x backend/.venv/bin/python ]; then
   "$PYTHON" -m venv backend/.venv || fail "venv creation failed"
 else
+  VENV_PYVER=$(backend/.venv/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+  [ "$VENV_PYVER" = "3.11" ] || fail "Existing backend/.venv uses Python $VENV_PYVER. Remove backend/.venv and re-run the installer with Python 3.11."
   log "  reusing existing venv"
 fi
 PIP="backend/.venv/bin/pip"

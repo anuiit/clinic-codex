@@ -1,6 +1,7 @@
 # type: ignore
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from backend.codex_model.classifier import (
     CodexClassifier,
     ModelPackageValidationError,
     _ProjectionHead,
+    _DEFAULT_LOCAL_BACKBONE_MANIFESTS,
 )
 from backend.services.model_registry import ModelRegistry
 
@@ -110,6 +112,7 @@ def test_classifier_loads_validated_runtime_packages(
     classifier = CodexClassifier(
         model_dir=registry.resolve_runtime_package("candidate"),
         device="cpu",
+        backbone_source="online",
     )
     result = classifier.classify(np.zeros((12, 8, 3), dtype=np.uint8), top_k=2)
 
@@ -146,7 +149,85 @@ def test_classifier_preserves_legacy_weights_directory_fallback(tmp_path, monkey
         lambda *_args, **_kwargs: _FakeBackbone(384),
     )
 
-    classifier = CodexClassifier(device="cpu")
+    classifier = CodexClassifier(device="cpu", backbone_source="online")
 
     assert classifier.num_classes == 2
     assert classifier.config["backbone"] == "dinov2_vits14"
+
+
+def test_classifier_loads_audited_local_backbone_without_remote_hub(
+    tmp_path, monkeypatch
+):
+    _registry, runtime_dir = _write_package(
+        tmp_path,
+        version_id="offline-local-pin",
+        backbone="dinov2_vits14",
+        hidden_dim=384,
+    )
+    repository = tmp_path / "dinov2-source"
+    repository.mkdir()
+    hubconf_bytes = b"# local test pin\n"
+    (repository / "hubconf.py").write_bytes(hubconf_bytes)
+    weights_path = tmp_path / "dinov2_vits14_pretrain.pth"
+    torch.save({}, weights_path)
+    manifest_path = tmp_path / "dinov2-vits14-local.json"
+    source_digest = hashlib.sha256(b"hubconf.py\0" + hubconf_bytes).hexdigest()
+    weights_digest = hashlib.sha256(weights_path.read_bytes()).hexdigest()
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dinov2-local-pin.v1",
+                "backbone": "dinov2_vits14",
+                "repository_path": str(repository),
+                "weights_path": str(weights_path),
+                "weights_sha256": weights_digest,
+                "source_tree_sha256": source_digest,
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_load(requested_repository, requested_backbone, *, source, pretrained):
+        calls.append(
+            (requested_repository, requested_backbone, source, pretrained)
+        )
+        return _FakeBackbone(384)
+
+    monkeypatch.setattr(torch.hub, "load", fake_load)
+    monkeypatch.setitem(
+        _DEFAULT_LOCAL_BACKBONE_MANIFESTS, "dinov2_vits14", manifest_path
+    )
+
+    classifier = CodexClassifier(
+        model_dir=runtime_dir,
+        device="cpu",
+        backbone_source="local",
+    )
+
+    assert calls == [(str(repository), "dinov2_vits14", "local", False)]
+    assert classifier.backbone_identity == {
+        "mode": "local_pin",
+        "backbone": "dinov2_vits14",
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "repository_path": str(repository),
+        "repository_sha256": source_digest,
+        "weights_path": str(weights_path),
+        "weights_sha256": weights_digest,
+        "state_sha256": hashlib.sha256(b"").hexdigest(),
+    }
+
+
+def test_model_identity_changes_when_loaded_backbone_changes(tmp_path, monkeypatch):
+    _, runtime = _write_package(tmp_path, version_id="backbone-identity", backbone="dinov2_vits14", hidden_dim=384)
+    def load(value):
+        backbone = _FakeBackbone(384)
+        backbone.register_buffer("identity_weight", torch.tensor([value]))
+        monkeypatch.setattr(torch.hub, "load", lambda *_args, **_kwargs: backbone)
+        model = CodexClassifier(model_dir=runtime, device="cpu", backbone_source="online")
+        return model.classify(np.zeros((8, 8, 3), dtype=np.uint8))["model_provenance"]
+    first, second = load(1.0), load(2.0)
+    assert first["sha256"] == second["sha256"]
+    assert first["backbone"]["state_sha256"] != second["backbone"]["state_sha256"]
+    assert first["artifact_id"] != second["artifact_id"]

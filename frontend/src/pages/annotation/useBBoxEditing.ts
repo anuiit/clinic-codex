@@ -1,3 +1,4 @@
+import { clearApproval } from "./annotationUtils";
 import {
   useCallback,
   useEffect,
@@ -288,7 +289,7 @@ export function useBBoxEditing({
       const originalBbox = newElements[activeDragState.idx].bbox;
       if (!areBboxesEqual(originalBbox, finalTempBbox)) {
         pushBboxHistory({ type: "update", idx: activeDragState.idx, previousBbox: [...originalBbox], focusedIdx });
-        newElements[activeDragState.idx] = { ...newElements[activeDragState.idx], bbox: finalTempBbox };
+        newElements[activeDragState.idx] = { ...clearApproval(newElements[activeDragState.idx]), bbox: finalTempBbox };
         setAnnotationStatus((prev) => ({ ...prev, [activeDragState.idx]: "draft" }));
         shouldCommitElements = true;
       }

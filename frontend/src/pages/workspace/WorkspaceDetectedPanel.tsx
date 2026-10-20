@@ -1,9 +1,10 @@
 import type { KeyboardEvent } from "react";
+import { AnalysisProvenance } from "../../components/AnalysisProvenance";
 import { AlertCircle, CheckCircle2, ChevronLeft, Edit3, Info, Loader2 } from "lucide-react";
 import type { AnalysisRecord, TrustResult } from "../../types";
-import { adminAnnotationMediaUrl } from "../../services/api";
 import type { WorkspaceTrustState } from "./useWorkspaceViewport";
 import { useArchetypeAssets } from "./useArchetypeAssets";
+import WorkspaceTopPredictions from "./WorkspaceTopPredictions";
 import {
   getCropPreviewSize,
   getWorkspaceElementClassName,
@@ -90,6 +91,7 @@ export default function WorkspaceDetectedPanel({
       className={`${sidebarStyles.owner} ${workspaceStyles.owner} app-sidebar workspace-inspector-rail flex min-h-0 flex-col overflow-hidden rounded-none sidebar-shell`}
       data-testid="workspace-detected-panel"
     >
+      <AnalysisProvenance result={record.result} />
       {focusedIdx !== null ? (
         <WorkspaceFocusedRegionPanel
           record={record}
@@ -147,11 +149,13 @@ function WorkspaceFocusedRegionPanel({
   onEditorHandoff,
 }: FocusedPanelProps) {
   const element = record.result.elements[focusedIdx];
+  const humanApproved = element.source === "approved_correction";
+  const unscored = element.confidence_kind === "unscored";
   const trustMatches =
     trustState.recordId === record.id && trustState.focusedIdx === focusedIdx;
-  const trustLoading = trustMatches && trustState.status === "loading";
-  const trustError = trustMatches && trustState.status === "error";
-  const trust = trustMatches && trustState.status === "ready" ? trustData?.trust : null;
+  const trustLoading = !humanApproved && !unscored && trustMatches && trustState.status === "loading";
+  const trustError = !humanApproved && !unscored && trustMatches && trustState.status === "error";
+  const trust = !humanApproved && !unscored && trustMatches && trustState.status === "ready" ? trustData?.trust : null;
   const summaryClass = trust?.top1_class ?? element.class_name;
   const topPrediction = trust?.top1_similarity ?? element.confidence;
   const runnerUp = trust?.top_k?.[1]?.confidence ?? element.top_k[1]?.confidence ?? 0;
@@ -211,7 +215,7 @@ function WorkspaceFocusedRegionPanel({
           data-testid="workspace-trust-summary"
         >
           <div className="flex items-center justify-between gap-3">
-            <h4 className="ui-title-md">{labels.trustSummary}</h4>
+            <h4 className="ui-title-md">{humanApproved ? "Correction approuvée" : labels.trustSummary}</h4>
             {contextLoading && <Loader2 size={14} className="animate-spin text-[color:var(--text-muted)]" />}
           </div>
           {(trustLoading || trustError) && (
@@ -246,7 +250,7 @@ function WorkspaceFocusedRegionPanel({
                       : "border border-[color:var(--status-ready-border)] bg-[color:var(--status-ready-soft)] text-[color:var(--status-ready-text)]"
                   }`}
                 >
-                  {(topPrediction * 100).toFixed(1)}%
+                  {humanApproved ? "Validé" : unscored ? "À revoir" : `${(topPrediction * 100).toFixed(1)}%`}
                 </span>
               </div>
               {initialPredictionDiffers && trust && (
@@ -298,62 +302,8 @@ function WorkspaceFocusedRegionPanel({
           )}
         </div>
 
-        {!trustLoading && !trustError && (
-          <div className="workspace-inspector-section flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <h4 className="ui-title-md">{labels.topPredictions}</h4>
-            </div>
-            {archetypes.status === "ready" && (
-              <div className="ui-text-meta" data-testid="archetype-coverage">
-                {labels.archetypeCoverage
-                  .replace("{covered}", String(archetypes.covered))
-                  .replace("{total}", String(archetypes.total))}
-              </div>
-            )}
-            <div className="space-y-2">
-              {topKItems.map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="ui-text-meta w-4 text-right">{i + 1}</span>
-                  {archetypes.status === "ready" && (
-                    <span
-                      className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden border border-[color:var(--border-subtle)]"
-                      data-archetype-thumb={item.class_name}
-                      data-has-asset={archetypes.assets.get(item.class_name) ? "true" : "false"}
-                    >
-                      {archetypes.assets.get(item.class_name) ? (
-                        <img
-                          src={adminAnnotationMediaUrl(archetypes.assets.get(item.class_name) as string)}
-                          alt=""
-                          className="h-full w-full object-contain"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span className="ui-text-meta" aria-hidden="true">
-                          —
-                        </span>
-                      )}
-                    </span>
-                  )}
-                  <div className="flex-1">
-                    <div className="mb-0.5 flex justify-between text-sm">
-                      <span className={i === 0 ? "font-medium text-[var(--text-body)]" : "text-[color:var(--text-muted)]"}>
-                        {item.class_name}
-                      </span>
-                      <span className={i === 0 ? "font-medium text-[var(--text-soft)]" : "text-[color:var(--text-muted)]"}>
-                        {(item.confidence * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="ui-progress-track h-1 w-full">
-                      <div
-                        className={`h-full rounded-full ${i === 0 ? (isRejected ? "ui-progress-value--accent" : "ui-progress-value--ready") : "bg-[var(--surface-hover)]"}`}
-                        style={{ width: `${item.confidence * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        {!humanApproved && !trustLoading && !trustError && (
+          <WorkspaceTopPredictions topKItems={topKItems} archetypes={archetypes} isRejected={isRejected} labels={labels} />
         )}
       </div>
 
@@ -485,7 +435,7 @@ function WorkspaceDetectedList({
                   {hasAnnotation && <CheckCircle2 size={12} className="shrink-0 text-[color:var(--status-ready-text)]" />}
                   <div className="flex shrink-0 flex-col items-end gap-0.5">
                     <span className={`ui-chip ${badgeClasses} rounded-none px-1.5 py-0.5 leading-none`}>
-                      {(element.confidence * 100).toFixed(1)}%
+                      {element.source === "approved_correction" ? "Validé" : element.confidence_kind === "unscored" ? "À revoir" : `${(element.confidence * 100).toFixed(1)}%`}
                     </span>
                   </div>
                 </div>

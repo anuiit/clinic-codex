@@ -865,7 +865,7 @@ class AdminTrainingService:
                 except Exception as exc:
                     # Malformed local artifacts should block launch, not break the admin page.
                     errors.append("training_preflight_failed: " + str(exc))
-            if self.review_store.manifest_path.is_file() and not self.review_store.db_path.is_file():
+            if self.review_store.manifest_path.is_file() and not self.review_store.has_database():
                 errors.append('legacy_reviews_require_import: scripts/migrate_annotation_reviews.py '
                               f'--annotations-dir "{self.review_store.annotations_dir}" --apply')
             count = len(records)

@@ -38,15 +38,27 @@ export interface TopKItem {
   confidence: number;
 }
 
+export interface ModelProvenance {
+  model_version: string | null;
+  version_id: string | null;
+  artifact_id: string;
+  sha256: Record<string, string>;
+  backbone?: Record<string, string>;
+}
+
 export interface ClassifyResult {
   class_name: string;
   class_label?: ClassLabel | null;
   confidence: number;
   rejected: boolean;
   top_k: TopKItem[];
+  model_provenance?: ModelProvenance;
 }
 
 export interface DetectedElement extends ClassifyResult {
+  source?: 'model' | 'approved_correction' | 'manual_edit';
+  confidence_kind?: 'human_approval' | 'unscored';
+  review?: { decision_id: string; reviewed_at: string | null; image_pixel_sha256: string };
   bbox: [number, number, number, number]; // [x, y, w, h]
   // Free-text research note. Annotator memo only — never exported to the
   // training dataset.
@@ -57,6 +69,13 @@ export interface SegmentResult {
   num_elements: number;
   image_size: [number, number]; // [w, h]
   elements: DetectedElement[];
+  provenance?: {
+    image_pixel_sha256: string;
+    correction_count: number;
+    corrections_enabled: boolean;
+    classifier_models: ModelProvenance[];
+    segmenter: { name: string; sha256: string; points_per_side: number } | null;
+  };
 }
 
 export interface ClassesResult {

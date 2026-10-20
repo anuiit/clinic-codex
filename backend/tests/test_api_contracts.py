@@ -175,7 +175,7 @@ def test_api_contract_segment_shape_and_missing_image(client, app_and_services):
     happy = _post_image(client, "/segment")
     assert happy.status_code == 200
     body = happy.get_json()
-    assert set(body) == {"num_elements", "image_size", "elements"}
+    assert set(body) == {"num_elements", "image_size", "elements", "provenance"}
     assert body["image_size"] == [8, 6]
     assert body["num_elements"] == 1
     assert body["elements"][0]["bbox"] == [1, 2, 3, 4]

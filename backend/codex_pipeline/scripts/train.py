@@ -48,6 +48,17 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def _require_separate_cache_split(data: dict, expected: str, path: str) -> None:
+    splits = data.get("dataset_splits")
+    if splits is not None and (
+        len(splits) != len(data["labels"]) or any(split != expected for split in splits)
+    ):
+        raise ValueError(
+            f"separate feature cache {path} must contain only {expected!r} rows; "
+            "heldouts cannot enter training or checkpoint selection"
+        )
+
+
 def load_initial_projection(
     model: ProjectionHead,
     path: str | Path,
@@ -287,8 +298,10 @@ def main():
             noise_std=args.noise_std,
             feature_mixup_prob=args.mixup_prob,
         )
+        _require_separate_cache_split(data_info, "train", args.features)
         prototype_train_dataset, _ = CachedFeatureDataset.from_file(args.features, split=None)
-        val_dataset, _ = CachedFeatureDataset.from_file(args.validation_features, split=None)
+        val_dataset, validation_info = CachedFeatureDataset.from_file(args.validation_features, split=None)
+        _require_separate_cache_split(validation_info, "dev", args.validation_features)
     else:
         split_strategy = data_cfg.get("split_strategy", "per_class")
         train_dataset, data_info = CachedFeatureDataset.from_file(

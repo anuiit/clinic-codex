@@ -9,6 +9,7 @@ import annotationStyles from "./AnnotationChrome.module.css";
 import { ElementNameCombobox } from "./ElementNameCombobox";
 
 interface AnnotationSelectedInspectorProps {
+  recordId: string | null;
   focusedElement: DetectedElement | null;
   focusedIdx: number | null;
   focusedDisplayName: string | null;
@@ -28,6 +29,7 @@ interface AnnotationSelectedInspectorProps {
 }
 
 export function AnnotationSelectedInspector({
+  recordId,
   focusedElement,
   focusedIdx,
   focusedDisplayName,
@@ -92,9 +94,9 @@ export function AnnotationSelectedInspector({
               <div className="annotation-selected-metrics min-w-0">
                 <div className="px-3 py-2">
                   <div className="ui-text-meta mb-1 flex items-center justify-between font-semibold">
-                    <span>Confiance</span>
+                    <span>{focusedElement.source === "approved_correction" ? "Correction approuvée" : focusedElement.confidence_kind === "unscored" ? "Modification manuelle" : "Confiance"}</span>
                     <span className="tabular-nums text-[var(--text-body)]">
-                      {focusedConfidencePercent}%
+                      {focusedElement.source === "approved_correction" ? "Validé" : focusedElement.confidence_kind === "unscored" ? "À revoir" : `${focusedConfidencePercent}%`}
                     </span>
                   </div>
                   <div className="ui-progress-track h-2">
@@ -172,7 +174,7 @@ export function AnnotationSelectedInspector({
                 {labels.elementNote}
               </label>
               <textarea
-                key={focusedIdx}
+                key={`${recordId ?? ""}:${focusedIdx}`}
                 id="annotation-element-note"
                 data-testid="annotation-element-note"
                 defaultValue={focusedElement.note ?? ""}

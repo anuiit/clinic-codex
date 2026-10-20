@@ -338,3 +338,25 @@ def test_exact_pixel_label_conflict_blocks_or_is_explicitly_excluded(tmp_path: P
     assert excluded["conflicts"][0]["resolution"] == "excluded_pending_manual_review"
     conflict_ids = {row["row_id"] for row in excluded["conflicts"][0]["rows"]}
     assert conflict_ids.isdisjoint(excluded["active_row_ids"])
+
+
+def test_reuploaded_duplicate_keeps_parent_row_identity_and_holdout() -> None:
+    original = {
+        "row_id": "parent-row", "source_kind": "live_annotation",
+        "source_id": "z-old-analysis:0", "class_name": "alpha", "class_label": 0,
+        "source_group": "old-page", "source_pixel_sha256": "same-crop",
+    }
+    reupload = {**original, "row_id": "new-row", "source_id": "a-new-analysis:0", "source_group": "new-page"}
+    peer = {**reupload, "row_id": "peer-row", "source_pixel_sha256": "peer-crop"}
+    train = {**original, "row_id": "train-row", "source_group": "train-page", "source_pixel_sha256": "train-crop"}
+    selected, duplicates, _, dsu = snapshot._deduplicate_and_group(
+        [reupload, original, peer, train], exclude_conflicts=False, parent_row_ids={"parent-row"},
+    )
+    assert {row["row_id"] for row in selected} == {"parent-row", "peer-row", "train-row"}
+    assert duplicates[0]["duplicate_of"] == "parent-row"
+    selected, assignments, _ = snapshot.assign_splits(
+        selected, dsu, parent_assignments={"old-page": "locked_test"},
+        salt="fixed", dev_fraction=0, test_fraction=0, min_train_rows_per_class=1,
+    )
+    assert assignments["old-page"] == assignments["new-page"] == "locked_test"
+    assert next(row for row in selected if row["row_id"] == "train-row")["dataset_split"] == "train"

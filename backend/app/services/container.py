@@ -42,6 +42,7 @@ class DefaultServices:
         self._classifier = None
         self._classifier_rollout = ClassifierRollout(settings, self.get_classifier)
         self._segmenter = None
+        self._segmenter_identity = None
         self._annotation_review_store: AnnotationReviewStore | None = None
         self._admin_training_service: AdminTrainingService | None = None
         self._sample_index: dict[str, list[dict[str, str]]] | None = None
@@ -72,11 +73,24 @@ class DefaultServices:
             _ensure_backend_root_on_path(self.settings)
             from codex_pipeline.segmentation import MobileSAMSegmenter
 
-            self._segmenter = MobileSAMSegmenter(
+            from backend.codex_model.classifier import _sha256_file
+            checkpoint_hash = _sha256_file(self.settings.mobile_sam_checkpoint_path.expanduser())
+            segmenter = MobileSAMSegmenter(
                 checkpoint_path=str(self.settings.mobile_sam_checkpoint_path),
                 points_per_side=16,
             )
+            if checkpoint_hash != _sha256_file(self.settings.mobile_sam_checkpoint_path.expanduser()):
+                raise RuntimeError("SAM checkpoint changed while loading")
+            self._segmenter = segmenter
+            self._segmenter_identity = {"name": "MobileSAM", "sha256": checkpoint_hash, "points_per_side": 16}
         return self._segmenter
+
+    def approved_page_corrections(self, image: np.ndarray):
+        from backend.services.approved_corrections import approved_page_corrections
+        return approved_page_corrections(self.annotation_review_store(), Image.fromarray(image))
+
+    def segmenter_provenance(self):
+        return dict(self._segmenter_identity) if self._segmenter_identity is not None else None
 
     def segment_page(self, image: np.ndarray):
         segmenter = self.get_segmenter()

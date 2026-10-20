@@ -6,6 +6,7 @@ File naming:   CC_FF_PP-ID.bmp  (codex_folio_page-elementID)
 """
 
 import os
+import json
 import re
 import pandas as pd
 from pathlib import Path
@@ -61,6 +62,19 @@ def build_metadata(
     records = []
     elements_dir = Path(elements_dir).resolve()
 
+    export_manifest_path = elements_dir / "_approved_export_manifest.json"
+    approved_rows = None
+    if export_manifest_path.is_file():
+        payload = json.loads(export_manifest_path.read_text(encoding="utf-8"))
+        approved_rows = {}
+        for row in payload["rows"]:
+            path = (elements_dir / row["output_relative_path"]).resolve() if row.get("output_relative_path") else Path(row["output_path"]).resolve()
+            if not path.is_relative_to(elements_dir) or path in approved_rows:
+                raise ValueError("approved export contains unsafe or duplicate output paths")
+            if row.get("dataset_split") not in {"train", "val", "test"}:
+                raise ValueError("approved export contains an invalid dataset split")
+            approved_rows[path] = row
+
     # Determine project root for relative path computation
     project_root = Path(base_dir).resolve() if base_dir is not None else elements_dir.parent
 
@@ -100,6 +114,18 @@ def build_metadata(
                 "instance_id": file_info["instance_id"],
             }
 
+            if approved_rows is not None:
+                if img_path not in approved_rows:
+                    raise ValueError(f"image absent from approved export manifest: {img_path}")
+                approved = approved_rows[img_path]
+                record.update({
+                    "class_label": approved["class_label"],
+                    "element_name": approved["class_name"],
+                    "dataset_split": {"train": "train", "val": "dev", "test": "locked_test"}[approved["dataset_split"]],
+                    "source_group": approved.get("source_group") or f"analysis:{approved['analysis_id']}",
+                    "row_id": f"annotation:{approved['analysis_id']}:{approved['index']}",
+                })
+
             if read_image_sizes:
                 from PIL import Image
                 try:
@@ -110,6 +136,8 @@ def build_metadata(
 
             records.append(record)
 
+    if approved_rows is not None and len(records) != len(approved_rows):
+        raise ValueError("approved export manifest references missing images")
     df = pd.DataFrame(records)
     return df
 

@@ -107,6 +107,9 @@ class CachedFeatureDataset(Dataset):
                 feature_mixup_prob=feature_mixup_prob,
             ), data
 
+        if data.get("dataset_splits") is not None and split_strategy != "persisted":
+            raise ValueError("features contain persisted dataset_splits; use split_strategy='persisted' to preserve heldouts")
+
         if split_strategy == "per_class":
             train_indices, val_indices = cls._split_per_class(labels, val_fraction=val_fraction, seed=seed)
         elif split_strategy == "source_group":

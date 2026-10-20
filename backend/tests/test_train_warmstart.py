@@ -224,3 +224,20 @@ def test_training_checkpoint_saves_and_resume_restores_scheduler_states(tmp_path
     resumed = torch.load(checkpoints / "latest.pt", map_location="cpu", weights_only=False)
     assert resumed["scheduler_state_dict"]["last_epoch"] == 2
     assert resumed["warmup_scheduler_state_dict"]["last_epoch"] == 1
+
+
+@pytest.mark.parametrize("contaminated_file", ["train", "dev"])
+def test_separate_validation_caches_cannot_mix_in_locked_test(tmp_path, monkeypatch, contaminated_file):
+    config, features, validation, projection = _write_eval_fixture(tmp_path)
+    path = features if contaminated_file == "train" else validation
+    data = torch.load(path, weights_only=False)
+    data["dataset_splits"] = [contaminated_file] * len(data["labels"])
+    data["dataset_splits"][-1] = "locked_test"
+    torch.save(data, path)
+    monkeypatch.setattr(sys, "argv", [
+        "train", "--config", str(config), "--features", str(features),
+        "--validation-features", str(validation), "--init-projection", str(projection),
+        "--eval-only",
+    ])
+    with pytest.raises(ValueError, match="heldouts cannot enter"):
+        train.main()

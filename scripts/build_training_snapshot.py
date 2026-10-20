@@ -352,7 +352,9 @@ def _deduplicate_and_group(
     rows: list[dict[str, Any]],
     *,
     exclude_conflicts: bool,
+    parent_row_ids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], DisjointSet]:
+    parent_row_ids = parent_row_ids or set()
     source_groups = {row["source_group"] for row in rows}
     dsu = DisjointSet(source_groups)
     by_pixels: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -386,6 +388,7 @@ def _deduplicate_and_group(
         ordered = sorted(
             cluster,
             key=lambda row: (
+                row["row_id"] not in parent_row_ids,
                 SOURCE_PRIORITY[row["source_kind"]],
                 row["class_label"],
                 row["source_group"],
@@ -971,10 +974,10 @@ def plan_training_snapshot(
         annotations_dirs or [], class_labels
     )
     all_rows = legacy_rows + external_rows + annotation_rows
-    selected, duplicates, conflicts, dsu = _deduplicate_and_group(
-        all_rows, exclude_conflicts=exclude_conflicts
-    )
     parent_assignments, parent_row_ids, parent_snapshot_id = _parent_assignments(parent_manifest)
+    selected, duplicates, conflicts, dsu = _deduplicate_and_group(
+        all_rows, exclude_conflicts=exclude_conflicts, parent_row_ids=parent_row_ids
+    )
     selected, assignments, components = assign_splits(
         selected,
         dsu,

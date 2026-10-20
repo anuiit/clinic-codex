@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -40,6 +41,12 @@ _RUNTIME_ARTIFACTS = {
 }
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 PREPROCESSING_VERSION = "runtime-lanczos-whitepad-imagenet.v1"
+_DEFAULT_LOCAL_BACKBONE_MANIFESTS = {
+    "dinov2_vits14": Path(__file__).resolve().parents[1]
+    / "training_corpus"
+    / "backbone-pins"
+    / "dinov2-vits14-local.json",
+}
 
 
 class ModelPackageValidationError(ValueError):
@@ -51,6 +58,33 @@ def _sha256_file(path: Path) -> str:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_tree(root: Path) -> str:
+    """Hash stable torch-hub sources using the audited pinning contract."""
+
+    digest = hashlib.sha256()
+    excluded_dirs = {
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
+    excluded_suffixes = {".pyc", ".pyo"}
+    for path in sorted(
+        candidate
+        for candidate in root.rglob("*")
+        if candidate.is_file()
+        and not excluded_dirs.intersection(candidate.relative_to(root).parts)
+        and candidate.suffix.lower() not in excluded_suffixes
+    ):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
     return digest.hexdigest()
 
 
@@ -224,6 +258,99 @@ def _load_config(path: Path) -> dict[str, Any]:
     return config
 
 
+def _load_local_backbone(
+    manifest_path: Path, backbone_name: str
+) -> tuple[nn.Module, dict[str, str]]:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ModelPackageValidationError(
+            f"audited local DINOv2 pin not found: {manifest_path}; "
+            "provide a pin path or explicitly select the online source"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ModelPackageValidationError(
+            f"invalid local DINOv2 pin: {manifest_path}"
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise ModelPackageValidationError("local DINOv2 pin must be a JSON object")
+    if manifest.get("schema_version") != "dinov2-local-pin.v1":
+        raise ModelPackageValidationError("local DINOv2 pin has an unsupported schema")
+    if manifest.get("backbone") != backbone_name:
+        raise ModelPackageValidationError(
+            f"local DINOv2 pin targets {manifest.get('backbone')!r}, "
+            f"expected {backbone_name!r}"
+        )
+
+    repository_raw = manifest.get("repository_path")
+    weights_raw = manifest.get("weights_path")
+    if not isinstance(repository_raw, str) or not repository_raw:
+        raise ModelPackageValidationError(
+            "local DINOv2 pin repository_path must be a non-empty string"
+        )
+    if not isinstance(weights_raw, str) or not weights_raw:
+        raise ModelPackageValidationError(
+            "local DINOv2 pin weights_path must be a non-empty string"
+        )
+    repository_path = Path(repository_raw).expanduser()
+    weights_path = Path(weights_raw).expanduser()
+    if not repository_path.is_dir() or not (repository_path / "hubconf.py").is_file():
+        raise ModelPackageValidationError(
+            f"local DINOv2 torch-hub source missing: {repository_path}"
+        )
+    if not weights_path.is_file():
+        raise ModelPackageValidationError(
+            f"local DINOv2 weights missing: {weights_path}"
+        )
+
+    expected_weights_sha = manifest.get("weights_sha256")
+    actual_weights_sha = _sha256_file(weights_path)
+    if (
+        not isinstance(expected_weights_sha, str)
+        or _SHA256_RE.fullmatch(expected_weights_sha) is None
+        or expected_weights_sha != actual_weights_sha
+    ):
+        raise ModelPackageValidationError(
+            "local DINOv2 weights checksum mismatch: "
+            f"expected {expected_weights_sha}, got {actual_weights_sha}"
+        )
+    expected_source_sha = manifest.get("source_tree_sha256")
+    actual_source_sha = _sha256_tree(repository_path)
+    if (
+        not isinstance(expected_source_sha, str)
+        or _SHA256_RE.fullmatch(expected_source_sha) is None
+        or expected_source_sha != actual_source_sha
+    ):
+        raise ModelPackageValidationError(
+            "local DINOv2 source tree checksum mismatch: "
+            f"expected {expected_source_sha}, got {actual_source_sha}"
+        )
+
+    backbone = torch.hub.load(
+        str(repository_path),
+        backbone_name,
+        source="local",
+        pretrained=False,
+    )
+    try:
+        state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+        backbone.load_state_dict(state_dict, strict=True)
+    except Exception as exc:
+        raise ModelPackageValidationError(
+            f"unable to load audited local DINOv2 weights: {weights_path}"
+        ) from exc
+    return backbone, {
+        "mode": "local_pin",
+        "backbone": backbone_name,
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest_sha256": _sha256_file(manifest_path),
+        "repository_path": str(repository_path),
+        "repository_sha256": actual_source_sha,
+        "weights_path": str(weights_path),
+        "weights_sha256": actual_weights_sha,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Projection head (identical to training architecture)
 # ---------------------------------------------------------------------------
@@ -248,6 +375,14 @@ class _ProjectionHead(nn.Module):
 # Image preprocessing (must match training exactly)
 # ---------------------------------------------------------------------------
 
+IMAGE_PREPROCESSING = {
+    "schema_version": "codex-image-preprocessing.v1",
+    "resize": "lanczos",
+    "padding": "center_white",
+    "normalization": "imagenet",
+}
+
+
 def _preprocess_image(
     image: Union[Image.Image, np.ndarray],
     image_size: int = 224,
@@ -271,7 +406,7 @@ def _preprocess_image(
     # Resize preserving aspect ratio, then pad to square
     w, h = image.size
     scale = image_size / max(w, h)
-    new_w, new_h = int(w * scale), int(h * scale)
+    new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
     image = image.resize((new_w, new_h), Image.LANCZOS)
 
     padded = Image.new("RGB", (image_size, image_size), (255, 255, 255))  # white pad — matches training data
@@ -305,6 +440,13 @@ class CodexClassifier:
                    the legacy weights/ folder next to this file.
         device: torch device string (e.g. 'cpu', 'cuda', 'mps').
                 Auto-detected when None.
+        backbone_manifest: audited local DINOv2 pin manifest path. When given
+                           (and ``backbone_source`` is omitted) the backbone is
+                           loaded from this pin instead of torch.hub.
+        backbone_source: ``online`` (default), ``local`` (default audited pin
+                         under training_corpus/backbone-pins), or a local pin
+                         manifest path. ``CODEX_DINOV2_SOURCE`` provides the
+                         same explicit override when neither argument is given.
     """
 
     def __init__(
@@ -312,6 +454,7 @@ class CodexClassifier:
         model_dir: Optional[Union[str, Path]] = None,
         device: Optional[str] = None,
         backbone_manifest: Optional[Union[str, Path]] = None,
+        backbone_source: Optional[Union[str, Path]] = None,
     ):
         module_dir = Path(__file__).parent
         requested_dir = Path(model_dir) if model_dir is not None else module_dir / "weights"
@@ -327,6 +470,9 @@ class CodexClassifier:
             self._weights_dir = requested_dir
             config_path = module_dir / "config.json"
         self.config = _load_config(config_path)
+        artifact_paths = {"config": config_path, "projection": self._weights_dir / "projection.pt",
+                          "prototypes": self._weights_dir / "prototypes.pt"}
+        loaded_hashes = {name: _sha256_file(path) for name, path in artifact_paths.items()}
 
         if device is None:
             if torch.cuda.is_available():
@@ -336,8 +482,26 @@ class CodexClassifier:
             else:
                 device = "cpu"
         self.device = torch.device(device)
-        self._backbone_manifest = backbone_manifest
+        if backbone_source is not None:
+            self._requested_backbone_source = backbone_source
+        elif backbone_manifest is not None:
+            self._requested_backbone_source = backbone_manifest
+        else:
+            self._requested_backbone_source = os.environ.get("CODEX_DINOV2_SOURCE", "online")
         self._load_weights()
+        if loaded_hashes != {name: _sha256_file(path) for name, path in artifact_paths.items()}:
+            raise ModelPackageValidationError("classifier artifacts changed while loading")
+        backbone_identity = {key: value for key, value in self._backbone_identity.items()
+                             if key in {"mode", "backbone", "weights_sha256", "repository_sha256", "state_sha256"}}
+        model_identity = {"sha256": loaded_hashes, "backbone": backbone_identity,
+                          "preprocessing": IMAGE_PREPROCESSING}
+        self._model_provenance = {
+            "model_version": self.config.get("model_version"),
+            "version_id": requested_dir.parent.name if is_runtime_package else None,
+            "artifact_id": hashlib.sha256(json.dumps(model_identity, sort_keys=True).encode()).hexdigest(),
+            "sha256": loaded_hashes,
+            "backbone": backbone_identity,
+        }
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -466,14 +630,38 @@ class CodexClassifier:
         self._projection.eval()
 
         backbone_name = self.config["backbone"]
-        if self._backbone_manifest is not None:
-            from scripts.pin_dinov2 import load_backbone
-
-            self._backbone, _ = load_backbone(backbone_name, self.device, self._backbone_manifest)
-        else:
+        requested_source = str(self._requested_backbone_source)
+        if requested_source.strip().lower() == "online":
             self._backbone = torch.hub.load(
-                "facebookresearch/dinov2", backbone_name, pretrained=True,
-            ).to(self.device).eval()
+                "facebookresearch/dinov2",
+                backbone_name,
+                pretrained=True,
+            )
+            self._backbone_identity = {
+                "mode": "torch_hub_pretrained",
+                "backbone": backbone_name,
+            }
+        else:
+            if requested_source.strip().lower() == "local":
+                try:
+                    manifest_path = _DEFAULT_LOCAL_BACKBONE_MANIFESTS[backbone_name]
+                except KeyError as exc:
+                    raise ModelPackageValidationError(
+                        f"no default audited local pin for {backbone_name}; "
+                        "provide a pin path or explicitly select the online source"
+                    ) from exc
+            else:
+                manifest_path = Path(self._requested_backbone_source).expanduser()
+            self._backbone, self._backbone_identity = _load_local_backbone(
+                manifest_path, backbone_name
+            )
+        state_digest = hashlib.sha256()
+        for name, tensor in sorted(self._backbone.state_dict().items()):
+            state_digest.update(f"{name}:{tensor.dtype}:{tuple(tensor.shape)}:".encode())
+            state_digest.update(tensor.detach().cpu().contiguous().reshape(-1).view(torch.uint8).numpy().tobytes())
+        self._backbone_identity["state_sha256"] = state_digest.hexdigest()
+        self._backbone = self._backbone.to(self.device)
+        self._backbone.eval()
 
         self._image_size = self.config["image_size"]
         self._rejection_threshold = float(self.config["rejection_threshold"])
@@ -481,6 +669,12 @@ class CodexClassifier:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def backbone_identity(self) -> dict[str, str]:
+        """Describe the exact DINOv2 loading source used by this instance."""
+
+        return dict(self._backbone_identity)
 
     @torch.no_grad()
     def classify(
@@ -538,6 +732,7 @@ class CodexClassifier:
             "confidence": best["confidence"],
             "rejected": best["rejected"],
             "top_k": top_list,
+            "model_provenance": self._model_provenance,
         }
 
     @torch.no_grad()
@@ -588,6 +783,7 @@ class CodexClassifier:
                 "confidence": best["confidence"],
                 "rejected": best["rejected"],
                 "top_k": top_list,
+                "model_provenance": self._model_provenance,
             })
 
         return results

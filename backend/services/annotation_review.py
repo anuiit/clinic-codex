@@ -19,6 +19,8 @@ from typing import Any, Iterable, Sequence
 
 from PIL import Image
 
+from .approved_corrections import stored_image_digest
+
 try:
     from backend.services.annotation_storage import (
         clamp_bbox,
@@ -45,6 +47,7 @@ SPLIT_REASONS = {
     "rejected_review",
     "missing_crop",
     "stale_decision",
+    "explicit_exclusion",
 }
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_FILENAME = "review-index.json"
@@ -230,6 +233,8 @@ def _split_payload_for_element(
 ) -> dict[str, str]:
     if review_status == TRAINABLE_STATUS and crop_exists and not stale_decision:
         persisted_split = (decision or {}).get("dataset_split")
+        if persisted_split == "excluded" and (decision or {}).get("status") == "approved":
+            return {"dataset_split": "excluded", "split_reason": "explicit_exclusion"}
         dataset_split = (
             persisted_split
             if persisted_split in TRAINABLE_DATASET_SPLITS
@@ -257,9 +262,25 @@ class AnnotationReviewStore:
         self.manifest_path = Path(manifest_path).resolve() if manifest_path else self.annotations_dir / MANIFEST_FILENAME
         self.db_path = self.annotations_dir / "review-state.sqlite3"
 
+    def has_database(self) -> bool:
+        """True only for a real review database (never creates the file).
+
+        A 0-byte or table-less ``review-state.sqlite3`` (e.g. left behind by a
+        tool that called ``sqlite3.connect`` on a missing path) counts as absent.
+        A corrupt file is not "absent": its ``sqlite3.DatabaseError`` propagates
+        so callers fail closed instead of silently ignoring review state.
+        """
+        if not self.db_path.is_file() or self.db_path.stat().st_size == 0:
+            return False
+        with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True, timeout=10)) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'review_decisions'"
+            ).fetchone()
+        return row is not None
+
     def ensure_database(self) -> None:
         """Create an empty database, but never silently import a legacy manifest."""
-        if not self.db_path.exists() and self.manifest_path.exists():
+        if not self.has_database() and self.manifest_path.exists():
             raise AnnotationReviewMigrationRequiredError(
                 'legacy review-index.json needs explicit import: run scripts/migrate_annotation_reviews.py '
                 f'--annotations-dir "{self.annotations_dir}" --apply'
@@ -326,11 +347,15 @@ class AnnotationReviewStore:
     def _write_decision(
         self, connection: sqlite3.Connection, element: dict[str, Any], revision: int,
         status: str, reviewer_id: str | None, action: str,
+        source_image_pixel_sha256: str | None,
     ) -> None:
         key = element["key"]
         split = _split_payload_for_element(
             key=key, review_status=status, crop_exists=Path(element["crop_path"]).is_file(),
             stale_decision=False,
+            # Keep a persisted split (incl. an explicit exclusion of an approved
+            # element) when the element is re-reviewed.
+            decision={"status": element.get("review_status"), "dataset_split": element.get("dataset_split")},
         )
         crop = Path(element["crop_path"])
         analysis_dir = self.annotations_dir / element["analysis_id"]
@@ -340,6 +365,7 @@ class AnnotationReviewStore:
             "analysis_id": element["analysis_id"], "index": element["index"],
             "revision": revision, "status": status, "reviewed_at": utc_now_iso(),
             "reviewed_by": reviewer_id,
+            "source_image_pixel_sha256": source_image_pixel_sha256,
             "source_fingerprint": element["base_source_fingerprint"],
             "class_name": element["class_name"], "bbox": element["bbox"],
             "note": element.get("note"), "crop_path": crop.relative_to(analysis_dir).as_posix(),
@@ -356,6 +382,10 @@ class AnnotationReviewStore:
             "INSERT INTO review_history(key, revision, action, state_json) VALUES (?, ?, ?, ?)",
             (key, revision, action, encoded),
         )
+
+    def _page_digest(self, analysis_id: str) -> str | None:
+        """Hash the immutable page pixels outside the write transaction (BEGIN IMMEDIATE)."""
+        return stored_image_digest(self.annotations_dir / analysis_id / "image.png")
 
     def _mutation_result(self, analysis_id: str, index: int, *, include_counts: bool = False) -> dict[str, Any]:
         queue = self.list_queue()
@@ -414,6 +444,7 @@ class AnnotationReviewStore:
             raise AnnotationReviewValidationError("target_revision must be a non-negative integer")
         if not allow_self_review:
             self._assert_not_submitter(analysis_id, reviewer_id)
+        page_digest = self._page_digest(analysis_id)
         with self._database(write=True) as connection:
             element, revision = self._current_element(connection, analysis_id, index)
             self._check_revision(revision, expected_revision)
@@ -441,13 +472,13 @@ class AnnotationReviewStore:
             if target.get("crop_sha256") and _file_sha256(crop) != target["crop_sha256"]:
                 raise AnnotationReviewConflictError("saved crop changed; cannot restore this revision")
             updated = {**element, "class_name": target["class_name"], "bbox": target["bbox"], "note": target.get("note"), "crop_path": str(crop)}
-            self._write_decision(connection, updated, revision + 1, "pending", reviewer_id, "restore")
+            self._write_decision(connection, updated, revision + 1, "pending", reviewer_id, "restore", page_digest)
         return self._mutation_result(analysis_id, index, include_counts=True)
 
     def list_queue(self) -> dict[str, Any]:
         manifest = self._load_manifest()
         decisions = manifest["decisions"]
-        review_mode = "sqlite" if self.db_path.is_file() else "legacy_readonly" if self.manifest_path.is_file() else "empty"
+        review_mode = "sqlite" if self.has_database() else "legacy_readonly" if self.manifest_path.is_file() else "empty"
         analyses: list[dict[str, Any]] = []
         diagnostics: list[dict[str, Any]] = []
         seen_keys: set[str] = set()
@@ -505,10 +536,11 @@ class AnnotationReviewStore:
         _validate_status(status)
         if not allow_self_review:
             self._assert_not_submitter(analysis_id, reviewer_id)
+        page_digest = self._page_digest(analysis_id)
         with self._database(write=True) as connection:
             element, revision = self._current_element(connection, analysis_id, index)
             self._check_revision(revision, expected_revision)
-            self._write_decision(connection, element, revision + 1, status, reviewer_id, "review")
+            self._write_decision(connection, element, revision + 1, status, reviewer_id, "review", page_digest)
         return self._mutation_result(analysis_id, index)
 
     def modify_element(
@@ -531,6 +563,7 @@ class AnnotationReviewStore:
             clean_note = sanitize_note(note) if note is not _UNSET else _UNSET
         except (TypeError, ValueError, OverflowError) as exc:
             raise AnnotationReviewValidationError(str(exc)) from exc
+        page_digest = self._page_digest(analysis_id)
         with self._database(write=True) as connection:
             element, revision = self._current_element(connection, analysis_id, index)
             self._check_revision(revision, expected_revision)
@@ -547,7 +580,7 @@ class AnnotationReviewStore:
             updated = {**element, "class_name": clean_class, "bbox": box, "crop_path": crop_path}
             if clean_note is not _UNSET:
                 updated["note"] = clean_note
-            self._write_decision(connection, updated, revision + 1, status, reviewer_id, "modify")
+            self._write_decision(connection, updated, revision + 1, status, reviewer_id, "modify", page_digest)
         return self._mutation_result(analysis_id, index, include_counts=True)
 
     def iter_approved_annotations(self) -> Iterable[dict[str, Any]]:
@@ -593,7 +626,7 @@ class AnnotationReviewStore:
         if not analysis_dir.is_dir() or not _is_relative_to(analysis_dir, self.annotations_dir):
             raise AnnotationReviewNotFoundError(f"annotation crop not found: {analysis_id}:{index}")
         key = review_key(analysis_id, index)
-        if self.db_path.exists():
+        if self.has_database():
             with closing(sqlite3.connect(self.db_path, timeout=10)) as connection, connection:
                 row = connection.execute("SELECT decision_json FROM review_decisions WHERE key = ?", (key,)).fetchone()
             decision = json.loads(row[0]) if row else None
@@ -606,7 +639,7 @@ class AnnotationReviewStore:
         raise AnnotationReviewNotFoundError(f"annotation crop not found: {analysis_id}:{index}")
 
     def _load_manifest(self) -> dict[str, Any]:
-        if self.db_path.exists():
+        if self.has_database():
             with closing(sqlite3.connect(self.db_path, timeout=10)) as connection, connection:
                 decisions = {
                     key: json.loads(raw) for key, raw in connection.execute(
@@ -681,13 +714,53 @@ class AnnotationReviewStore:
             except (TypeError, ValueError) as exc:
                 raise AnnotationReviewValidationError(f"invalid legacy decision {key}: {exc}") from exc
         digest = hashlib.sha256(raw).hexdigest()
-        return {"status": "ready", "decisions": len(manifest["decisions"]),
+        stale: list[str] = []
+        missing_source: list[str] = []
+        valid_by_status = {status: 0 for status in sorted(REVIEW_STATUSES)}
+        for key, decision in manifest["decisions"].items():
+            if key in quarantined:
+                continue
+            current = self._legacy_decision_is_current(key, decision)
+            if current is None:
+                missing_source.append(key)
+            elif current:
+                valid_by_status[decision["status"]] += 1
+            else:
+                stale.append(key)
+        status = "ready"
+        if self.has_database():
+            with closing(sqlite3.connect(self.db_path, timeout=10)) as connection, connection:
+                row = connection.execute("SELECT value FROM review_meta WHERE key = 'legacy_sha256'").fetchone()
+            status = "already_imported" if row and row[0] == digest else "database_exists"
+        return {"status": status, "decisions": len(manifest["decisions"]),
                 "importable_decisions": len(manifest["decisions"]) - len(quarantined),
+                "valid_decisions": sum(valid_by_status.values()),
+                "valid_by_status": valid_by_status,
+                "stale_decisions": len(stale), "stale_keys": stale,
+                "missing_source": missing_source,
                 "normalized_bboxes": normalized_bboxes,
                 "quarantined_invalid_bboxes": quarantined, "sha256": digest}
 
+    def _legacy_decision_is_current(self, key: str, decision: dict[str, Any]) -> bool | None:
+        """Whether a legacy decision still matches its source (None: no source annotation).
+
+        Uses the same rules as the queue: the stored fingerprint must equal the
+        current base or legacy (path-bound) fingerprint and the reviewed crop
+        must be unchanged. Anything else stays stale and non-trainable.
+        """
+        analysis = self._read_analysis(
+            self.annotations_dir / decision["analysis_id"], {key: decision}, [], set(),
+            only_index=decision["index"],
+        )
+        element = self._find_element([analysis] if analysis else [], decision["analysis_id"], decision["index"])
+        if element is None:
+            return None
+        return not element["stale_decision"]
+
     def import_legacy_manifest(self) -> dict[str, Any]:
         preview = self.preview_legacy_import()
+        if preview["status"] == "database_exists":
+            raise AnnotationReviewConflictError("review database already exists with different state; refusing import")
         if preview["status"] != "ready":
             return preview
         if preview["decisions"] and not preview["importable_decisions"]:
@@ -695,7 +768,7 @@ class AnnotationReviewStore:
                 "all legacy bboxes are invalid; refusing an empty import: "
                 + ", ".join(preview["quarantined_invalid_bboxes"])
             )
-        if self.db_path.exists():
+        if self.has_database():
             with closing(sqlite3.connect(self.db_path, timeout=10)) as connection, connection:
                 row = connection.execute("SELECT value FROM review_meta WHERE key = 'legacy_sha256'").fetchone()
             if row and row[0] == preview["sha256"]:
@@ -729,15 +802,30 @@ class AnnotationReviewStore:
                     element = self._find_element([analysis] if analysis else [], old["analysis_id"], old["index"])
                     if element is None:
                         raise AnnotationReviewValidationError(f"legacy decision has no source annotation: {key}")
-                    decision = {**old, "bbox": self._legacy_bbox(old["bbox"]),
-                                "source_fingerprint": element["base_source_fingerprint"], "revision": 1}
+                    decision = {**old, "bbox": self._legacy_bbox(old["bbox"]), "revision": 1}
+                    if self._legacy_decision_is_current(key, old):
+                        # Same source: upgrade to the path-independent fingerprint.
+                        decision["source_fingerprint"] = element["base_source_fingerprint"]
+                    # Otherwise keep the stored fingerprint so the decision stays
+                    # stale (pending, not trainable) until it is reviewed again.
                     encoded = json.dumps(decision, sort_keys=True, ensure_ascii=False)
                     connection.execute("INSERT INTO review_decisions VALUES (?, ?, ?)", (key, 1, encoded))
                     connection.execute("INSERT INTO review_history VALUES (?, ?, ?, ?)", (key, 1, "legacy_import", encoded))
                 connection.execute("INSERT INTO review_meta VALUES ('legacy_sha256', ?)", (preview["sha256"],))
             if hashlib.sha256(self.manifest_path.read_bytes()).hexdigest() != preview["sha256"]:
                 raise AnnotationReviewConflictError("legacy manifest changed during import; retry")
-            os.link(staged, self.db_path)  # Atomic no-clobber publish on the same local filesystem.
+            if self.db_path.is_file() and self.db_path.stat().st_size == 0:
+                # Empty placeholder left by an earlier tool; it holds no review state.
+                self.db_path.unlink()
+            try:
+                os.link(staged, self.db_path)  # Atomic no-clobber publish on the same local filesystem.
+            except FileExistsError:
+                raise
+            except OSError:
+                # Filesystem without hard links: publish with a rename instead.
+                if self.db_path.exists():
+                    raise FileExistsError(str(self.db_path)) from None
+                os.replace(staged, self.db_path)
         except FileExistsError as exc:
             raise AnnotationReviewConflictError("another review database appeared during import") from exc
         finally:
@@ -926,13 +1014,18 @@ class AnnotationReviewStore:
                     )
                 )
 
-            trainable = review_status == TRAINABLE_STATUS and crop_exists and not stale_decision
             split_payload = _split_payload_for_element(
                 key=key,
                 review_status=review_status,
                 crop_exists=crop_exists,
                 stale_decision=stale_decision,
                 decision=decision,
+            )
+            trainable = (
+                review_status == TRAINABLE_STATUS
+                and crop_exists
+                and not stale_decision
+                and split_payload["dataset_split"] in TRAINABLE_DATASET_SPLITS
             )
             elements.append(
                 {
@@ -951,6 +1044,10 @@ class AnnotationReviewStore:
                     "base_source_fingerprint": base_fingerprint,
                     "revision": decision.get("revision", 0) if decision else 0,
                     "stale_decision": stale_decision,
+                    "reviewed_at": decision.get("reviewed_at") if decision and not stale_decision else None,
+                    "source_image_pixel_sha256": (
+                        decision.get("source_image_pixel_sha256") if decision and not stale_decision else None
+                    ),
                     **split_payload,
                 }
             )

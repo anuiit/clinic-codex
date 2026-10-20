@@ -126,6 +126,70 @@ def test_ready_reports_all_assets_present_without_instantiating_models(tmp_path)
     assert checks["mobile_sam_checkpoint"]["available"] is True
 
 
+def test_ready_resolves_runtime_package_config_and_weights(tmp_path):
+    runtime_dir = tmp_path / "model-registry" / "versions" / "v1" / "runtime"
+    weights_dir = runtime_dir / "weights"
+    weights_dir.mkdir(parents=True)
+    (runtime_dir / "config.json").write_text(
+        '{"model_version": "runtime-v1"}\n', encoding="utf-8"
+    )
+    (weights_dir / "prototypes.pt").write_bytes(b"proto")
+    (weights_dir / "projection.pt").write_bytes(b"proj")
+    settings = Settings(
+        backend_root=tmp_path / "backend-root",
+        model_dir=str(runtime_dir),
+        mobile_sam_checkpoint=str(tmp_path / "mobile_sam.pt"),
+        testing=True,
+    )
+    settings.mobile_sam_checkpoint_path.write_bytes(b"sam")
+    app = create_app(settings=settings, services=PoisonServices())
+
+    with app.test_client() as client:
+        resp = client.get("/ready")
+
+    assert resp.status_code == 200
+    assert settings.class_config_path == runtime_dir / "config.json"
+    checks = _checks_by_name(resp.get_json())
+    assert checks["classifier_prototypes"]["path"] == str(
+        weights_dir / "prototypes.pt"
+    )
+    assert checks["classifier_projection"]["path"] == str(
+        weights_dir / "projection.pt"
+    )
+
+
+def test_model_dir_preserves_legacy_weights_layout(tmp_path):
+    legacy_weights = tmp_path / "legacy-weights"
+    legacy_weights.mkdir()
+    (legacy_weights / "config.json").write_text("{}\n", encoding="utf-8")
+    settings = Settings(
+        backend_root=tmp_path / "backend-root",
+        model_dir=str(legacy_weights),
+        testing=True,
+    )
+
+    assert settings.classifier_weights_dir == legacy_weights
+    assert settings.class_config_path == (
+        settings.backend_root / "codex_model" / "config.json"
+    )
+
+
+def test_incomplete_directory_named_runtime_is_not_a_runtime_package(tmp_path):
+    incomplete_runtime = tmp_path / "runtime"
+    incomplete_runtime.mkdir()
+    settings = Settings(
+        backend_root=tmp_path / "backend-root",
+        model_dir=str(incomplete_runtime),
+        testing=True,
+    )
+
+    assert settings.classifier_runtime_dir is None
+    assert settings.classifier_weights_dir == incomplete_runtime
+    assert settings.class_config_path == (
+        settings.backend_root / "codex_model" / "config.json"
+    )
+
+
 def test_ready_reports_missing_classifier_prototype(tmp_path):
     settings = _settings(tmp_path)
     _write_classifier_assets(settings, prototypes=False, projection=True)

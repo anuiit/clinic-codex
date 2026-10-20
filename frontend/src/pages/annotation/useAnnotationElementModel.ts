@@ -1,3 +1,4 @@
+import { clearApproval } from "./annotationUtils";
 import { useEffect, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { AnnotationStatus, DetectedElement } from "../../types";
 import {
@@ -50,7 +51,7 @@ export function useAnnotationElementModel({
 
     setElements((prev) =>
       prev.map((el, elementIdx) =>
-        elementIdx === idx ? { ...el, class_name: normalizedName } : el,
+        elementIdx === idx ? { ...clearApproval(el), class_name: normalizedName } : el,
       ),
     );
     setAnnotationStatus((prev) => ({ ...prev, [idx]: "draft" }));

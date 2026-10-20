@@ -107,6 +107,8 @@ def flask_mod(monkeypatch):
     services = mod.app.extensions["clinic_services"]
     monkeypatch.setattr(services, "_raise_for_missing_classifier_assets", lambda: None)
     monkeypatch.setattr(services, "_raise_for_missing_mobile_sam_checkpoint", lambda: None)
+    # The stub segmenter has no weights; avoid hashing the real checkpoint path.
+    monkeypatch.setattr("backend.codex_model.classifier._sha256_file", lambda path: "0" * 64)
     return mod
 
 
@@ -239,7 +241,7 @@ def test_segment_missing_and_happy_shapes_use_batch_classify(client):
     happy = _post_image(client, "/segment")
     assert happy.status_code == 200
     body = happy.get_json()
-    assert_top_keys(body, ["num_elements", "image_size", "elements"])
+    assert_top_keys(body, ["num_elements", "image_size", "elements", "provenance"])
     assert body["image_size"] == [8, 6]
     assert body["num_elements"] == 1
     assert body["elements"][0]["bbox"] == [1, 2, 3, 4]

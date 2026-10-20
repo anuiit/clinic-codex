@@ -163,7 +163,7 @@ def test_segment_shape_and_batch_classifies_valid_crops_once():
         assert happy.status_code == 200
         body = happy.get_json()
 
-    assert set(body) == {"num_elements", "image_size", "elements"}
+    assert set(body) == {"num_elements", "image_size", "elements", "provenance"}
     assert body["image_size"] == [8, 6]
     assert body["num_elements"] == 2
     assert body["elements"][0]["bbox"] == [1, 2, 3, 4]
@@ -220,9 +220,47 @@ def test_segment_skips_batch_when_no_valid_crops():
         resp = _post_image(client, "/segment")
 
     assert resp.status_code == 200
-    assert resp.get_json() == {"num_elements": 0, "image_size": [8, 6], "elements": []}
+    body = resp.get_json()
+    assert body["num_elements"] == 0 and body["image_size"] == [8, 6] and body["elements"] == []
+    assert body["provenance"]["correction_count"] == 0
     assert services.classify_calls == 0
     assert services.classify_batch_calls == 0
+
+
+def test_segment_degrades_to_model_only_when_review_store_fails(caplog):
+    import sqlite3
+
+    services = StubServices()
+
+    def broken_lookup(image):
+        raise sqlite3.OperationalError("database disk image is malformed")
+
+    services.approved_page_corrections = broken_lookup
+    app = create_app(settings=Settings(testing=True), services=services)
+    with app.test_client() as client:
+        resp = _post_image(client, "/segment")
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["num_elements"] == 2
+    assert all(element["source"] == "model" for element in body["elements"])
+    assert body["provenance"]["correction_count"] == 0
+    assert body["provenance"]["corrections_enabled"] is True
+    assert body["provenance"]["corrections_unavailable"] is True
+    assert "OperationalError" in body["provenance"]["corrections_unavailable_reason"]
+    assert "approved corrections unavailable" in caplog.text
+
+
+def test_segment_reports_corrections_available_when_lookup_succeeds():
+    services = StubServices()
+    services.approved_page_corrections = lambda image: {
+        "elements": [], "conflicts": [], "image_pixel_sha256": "x"}
+    app = create_app(settings=Settings(testing=True), services=services)
+    with app.test_client() as client:
+        body = _post_image(client, "/segment").get_json()
+
+    assert body["provenance"]["corrections_unavailable"] is False
+    assert "corrections_unavailable_reason" not in body["provenance"]
 
 
 def test_segment_rejects_batch_result_count_mismatch():

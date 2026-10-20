@@ -19,6 +19,26 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 
+_RULES = ROOT / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json"
+
+
+def _frozen_inputs_present() -> bool:
+    if not _RULES.exists():
+        return False
+    try:
+        inputs = module.validate_contract()["spec"]["inputs"]
+    except (OSError, ValueError, KeyError):
+        return False
+    names = ("local_codex_catalog", "visual_lexicon_inventory", "v12_exclusion_rules", "v13_archive_crosswalk")
+    return all(module.resolve_input(inputs[name]).exists() for name in names)
+
+
+requires_frozen_inputs = pytest.mark.skipif(
+    not _frozen_inputs_present(),
+    reason="requires unshipped research artifact: v16 frozen inputs (crosswalk rules + local codex catalogue under /mnt/f)",
+)
+
+
 def _prepared() -> tuple[dict, dict, list[dict], list[dict]]:
     contract = module.validate_contract()
     frozen = module.load_frozen_inputs(contract)
@@ -36,6 +56,7 @@ def _prepared() -> tuple[dict, dict, list[dict], list[dict]]:
     return contract, frozen, documents, crosswalk
 
 
+@pytest.mark.research_artifacts
 @pytest.mark.skipif(
     not (Path(__file__).resolve().parents[2] / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json").exists(),
     reason="requires unshipped research artifact: 20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json",
@@ -58,10 +79,8 @@ def test_normalization_is_frozen_and_removes_only_generic_identity_tokens() -> N
     assert module.normalize_identity("Xolotl, Codex (Xolo)") == "xolotl xolo"
 
 
-@pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[2] / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json").exists(),
-    reason="requires unshipped research artifact: 20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json",
-)
+@pytest.mark.research_artifacts
+@requires_frozen_inputs
 def test_local_catalogue_collapses_to_28_physical_documents() -> None:
     _, _, documents, _ = _prepared()
     assert len(documents) == 28
@@ -70,10 +89,8 @@ def test_local_catalogue_collapses_to_28_physical_documents() -> None:
     assert len(all_ids) == len(set(all_ids))
 
 
-@pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[2] / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json").exists(),
-    reason="requires unshipped research artifact: 20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json",
-)
+@pytest.mark.research_artifacts
+@requires_frozen_inputs
 def test_all_23_mh_sections_are_one_physical_document_with_archive_support() -> None:
     _, _, documents, _ = _prepared()
     mh = next(
@@ -87,10 +104,8 @@ def test_all_23_mh_sections_are_one_physical_document_with_archive_support() -> 
     ]
 
 
-@pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[2] / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json").exists(),
-    reason="requires unshipped research artifact: 20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json",
-)
+@pytest.mark.research_artifacts
+@requires_frozen_inputs
 def test_crosswalk_is_exhaustive_and_preserves_all_v12_exclusions() -> None:
     _, _, _, crosswalk = _prepared()
     assert len(crosswalk) == 50
@@ -112,10 +127,8 @@ def test_crosswalk_is_exhaustive_and_preserves_all_v12_exclusions() -> None:
     }
 
 
-@pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[2] / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json").exists(),
-    reason="requires unshipped research artifact: 20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json",
-)
+@pytest.mark.research_artifacts
+@requires_frozen_inputs
 def test_removing_a_v12_exclusion_is_rejected() -> None:
     contract = module.validate_contract()
     frozen = module.load_frozen_inputs(contract)
@@ -135,10 +148,8 @@ def test_removing_a_v12_exclusion_is_rejected() -> None:
         )
 
 
-@pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[2] / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json").exists(),
-    reason="requires unshipped research artifact: 20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json",
-)
+@pytest.mark.research_artifacts
+@requires_frozen_inputs
 def test_duplicate_physical_assignment_is_rejected() -> None:
     contract = module.validate_contract()
     frozen = module.load_frozen_inputs(contract)
@@ -157,10 +168,8 @@ def test_duplicate_physical_assignment_is_rejected() -> None:
         )
 
 
-@pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[2] / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json").exists(),
-    reason="requires unshipped research artifact: 20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json",
-)
+@pytest.mark.research_artifacts
+@requires_frozen_inputs
 def test_gate_zero_recertifies_41_and_short_circuits_acquisition() -> None:
     contract = module.validate_contract()
     _, _, audit = module.build_audit(contract)
@@ -176,10 +185,8 @@ def test_gate_zero_recertifies_41_and_short_circuits_acquisition() -> None:
     assert audit["runtime_unchanged"] is True
 
 
-@pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[2] / ".omc/autoresearch/elements-baseline-replacement/runs/20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json").exists(),
-    reason="requires unshipped research artifact: 20260803-institutional-inventory-v16/local-identity-crosswalk-rules.json",
-)
+@pytest.mark.research_artifacts
+@requires_frozen_inputs
 def test_replay_is_byte_exact_but_overall_pass_remains_false(tmp_path: Path) -> None:
     contract = module.validate_contract()
     documents, crosswalk, audit = module.build_audit(contract)

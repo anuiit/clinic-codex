@@ -238,3 +238,43 @@ def test_sha256_tree_ignores_generated_python_caches(tmp_path: Path) -> None:
     (repository / "module.pyc").write_bytes(b"generated")
 
     assert precompute.sha256_tree(repository) == expected
+
+
+@pytest.mark.parametrize("dimensions", [(17, 31), (1, 1000)])
+def test_training_and_clean_augmented_images_match_runtime(tmp_path, dimensions):
+    import numpy as np
+    import torch
+    from codex_model.classifier import _preprocess_image
+    from backend.codex_pipeline.scripts.precompute_augmented import load_clean
+
+    width, height = dimensions
+    pixels = np.arange(width * height * 3, dtype=np.uint32).reshape(height, width, 3)
+    image = Image.fromarray((pixels % 251).astype(np.uint8))
+    path = tmp_path / "crop.png"
+    image.save(path)
+    metadata = pd.DataFrame([{"image_path": str(path), "class_label": 7}])
+    training_tensor, label = precompute.SimpleImageDataset(metadata, image_size=224)[0]
+    runtime_tensor = _preprocess_image(image, 224).squeeze(0)
+
+    assert label == 7
+    assert training_tensor.shape == (3, 224, 224)
+    assert torch.equal(training_tensor, runtime_tensor)
+    assert torch.equal(load_clean(path, 224), runtime_tensor)
+
+
+def test_validation_and_legacy_inference_use_runtime_preprocessing():
+    import pickle
+    import numpy as np
+    import torch
+    from codex_model.classifier import _preprocess_image
+    from backend.codex_pipeline.data.augmentation import get_val_transform
+    from backend.codex_pipeline.inference.engine import InferenceEngine
+
+    image = (np.arange(17 * 31 * 3).reshape(31, 17, 3) % 251).astype(np.uint8)
+    expected = _preprocess_image(image, 224)
+    transform = pickle.loads(pickle.dumps(get_val_transform(224)))
+    assert torch.equal(transform(image=image)["image"], expected.squeeze(0))
+    engine = object.__new__(InferenceEngine)
+    engine.image_size = 224
+    engine.device = torch.device("cpu")
+    assert torch.equal(engine.preprocess(image), expected)

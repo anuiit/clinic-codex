@@ -98,4 +98,40 @@ describe('useArchetypeAssets', () => {
     });
     expect(mockedGetSimilar).toHaveBeenCalledTimes(2);
   });
+
+  it('does not refetch when a bbox has the same values with a new array identity', async () => {
+    mockedGetSimilar.mockResolvedValue(
+      similarResponse([{ class_name: 'atl', asset: '/samples/atl/a.png' }]) as never,
+    );
+
+    const { result, rerender } = renderHook(
+      ({ bbox }) => useArchetypeAssets('rec-1', 'data:image/png;base64,x', bbox, ['atl']),
+      { initialProps: { bbox: [0, 0, 4, 4] as [number, number, number, number] } },
+    );
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(mockedGetSimilar).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rerender({ bbox: [0, 0, 4, 4] });
+      await Promise.resolve();
+    });
+    expect(mockedGetSimilar).toHaveBeenCalledTimes(1);
+  });
+
+  it('refetches for distinct class lists whose concatenated names would collide', async () => {
+    mockedGetSimilar.mockResolvedValue(
+      similarResponse([{ class_name: 'atl', asset: '/samples/atl/a.png' }]) as never,
+    );
+    const bbox = [0, 0, 4, 4] as [number, number, number, number];
+
+    const { result, rerender } = renderHook(
+      ({ classNames }) => useArchetypeAssets('rec-1', 'data:image/png;base64,x', bbox, classNames),
+      { initialProps: { classNames: ['a', 'tl'] } },
+    );
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(mockedGetSimilar).toHaveBeenCalledTimes(1);
+
+    rerender({ classNames: ['at', 'l'] });
+    await waitFor(() => expect(mockedGetSimilar).toHaveBeenCalledTimes(2));
+  });
 });

@@ -36,6 +36,16 @@ def _save(annotations_dir: Path):
     )
 
 
+def _patch_decisions(store: AnnotationReviewStore, splits: dict[str, str]) -> None:
+    """Edit persisted SQLite review decisions in place (simulates legacy/imported splits)."""
+    with closing(sqlite3.connect(store.db_path)) as connection, connection:
+        for key, split in splits.items():
+            (raw,) = connection.execute("SELECT decision_json FROM review_decisions WHERE key = ?", (key,)).fetchone()
+            decision = json.loads(raw)
+            decision["dataset_split"] = split
+            connection.execute("UPDATE review_decisions SET decision_json = ? WHERE key = ?", (json.dumps(decision), key))
+
+
 def test_export_approved_annotations_materializes_only_trainable_approved_elements(tmp_path):
     annotations_dir = tmp_path / "annotations"
     _save(annotations_dir)
@@ -117,3 +127,74 @@ def test_export_excludes_research_note_from_training_manifest(tmp_path):
     persisted = json.loads((output_dir / "_approved_export_manifest.json").read_text())
     assert all("note" not in row for row in persisted["rows"])
     assert '"note"' not in json.dumps(persisted)
+
+
+def test_approved_explicitly_excluded_annotation_is_never_reassigned_or_exported(tmp_path):
+    annotations_dir = tmp_path / "annotations"
+    _save(annotations_dir)
+    store = AnnotationReviewStore(annotations_dir)
+    store.set_status("approved-export-1", 0, "approved")
+    _patch_decisions(store, {"approved-export-1:0": "excluded"})
+
+    element = store.list_queue()["analyses"][0]["elements"][0]
+    assert element["dataset_split"] == "excluded"
+    assert element["trainable"] is False
+    assert export_approved_annotations(annotations_dir, tmp_path / "output")["exported_count"] == 0
+    assert store.set_status("approved-export-1", 0, "approved")["element"]["trainable"] is False
+    store.set_status("approved-export-1", 0, "pending")
+    assert store.set_status("approved-export-1", 0, "approved")["element"]["trainable"] is True
+
+
+def test_export_reports_every_exclusion_and_preserves_runtime_labels(tmp_path):
+    annotations_dir = tmp_path / "annotations"
+    _save(annotations_dir)
+    store = AnnotationReviewStore(annotations_dir)
+    store.set_status("approved-export-1", 0, "approved")
+    store.set_status("approved-export-1", 1, "rejected")
+    store.set_status("approved-export-1", 2, "approved")
+    config = tmp_path / "runtime.json"
+    config.write_text(json.dumps({"class_names": ["calli", "atl", "missing-crop"]}))
+
+    report = export_approved_annotations(annotations_dir, tmp_path / "output", runtime_config=config)
+    assert report["total_annotation_count"] == 4
+    assert report["exported_count"] == 1
+    assert report["excluded_counts"] == {"rejected_review": 1, "unknown_class": 1, "pending_review": 1}
+    assert report["exported_count"] + report["excluded_count"] == report["total_annotation_count"]
+    assert sum(report["split_counts"].values()) == 1
+    assert report["rows"][0]["class_label"] == 1
+    assert Path(report["rows"][0]["output_path"]).parent.name == "0002-atl"
+
+
+def test_approved_metadata_keeps_labels_splits_and_source_pages(tmp_path):
+    from backend.codex_pipeline.data.metadata import build_metadata
+    from backend.codex_pipeline.data.cached_dataset import CachedFeatureDataset
+    import torch
+    import pytest
+
+    annotations_dir = tmp_path / "annotations"
+    _save(annotations_dir)
+    store = AnnotationReviewStore(annotations_dir)
+    for index in [0, 1, 2]:
+        store.set_status("approved-export-1", index, "approved")
+    _patch_decisions(store, {f"approved-export-1:{index}": split for index, split in enumerate(["train", "val", "test"])})
+    config = tmp_path / "runtime.json"
+    config.write_text(json.dumps({"class_names": ["calli", "unused", "atl", "tochtli", "missing-crop"]}))
+    output = tmp_path / "Elements"
+    report = export_approved_annotations(annotations_dir, output, runtime_config=config)
+    metadata = build_metadata(str(output))
+    assert dict(zip(metadata.element_name, metadata.class_label)) == {"atl": 2, "calli": 0, "tochtli": 3}
+    assert dict(zip(metadata.element_name, metadata.dataset_split)) == {"atl": "train", "calli": "dev", "tochtli": "locked_test"}
+    assert metadata.source_group.nunique() == 1
+    assert metadata.source_group.iloc[0].startswith("image-pixels:")
+    features = tmp_path / "features.pt"
+    torch.save({"features": torch.arange(3).float().unsqueeze(1), "labels": torch.tensor(metadata.class_label.tolist()), "dataset_splits": metadata.dataset_split.tolist()}, features)
+    train, _ = CachedFeatureDataset.from_file(str(features), split="train", split_strategy="persisted")
+    val, _ = CachedFeatureDataset.from_file(str(features), split="val", split_strategy="persisted")
+    assert train.labels.tolist() == [2]
+    assert val.labels.tolist() == [0]
+    with pytest.raises(ValueError, match="preserve heldouts"):
+        CachedFeatureDataset.from_file(str(features), split="train")
+    relative = report["rows"][0]["output_relative_path"]
+    (output / relative).unlink()
+    with pytest.raises(ValueError, match="missing images"):
+        build_metadata(str(output))
