@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from backend.services.annotation_review import AnnotationReviewStore
 from scripts.freeze_business_test_set import (
     materialize_business_test_set,
     plan_business_test_set,
@@ -96,6 +97,31 @@ def test_freeze_is_deterministic_and_write_once(tmp_path: Path) -> None:
     assert len(list((output / "Elements").rglob("*.bmp"))) == 1
     with pytest.raises(FileExistsError):
         materialize_business_test_set(first, payloads, tmp_path / "output")
+
+
+def test_freeze_reads_decisions_from_sqlite_review_store(tmp_path: Path) -> None:
+    annotations, baseline, runtime, training = _fixture(tmp_path)
+    kwargs = {
+        "annotations_dir": annotations,
+        "baseline_annotations_dir": baseline,
+        "runtime_config": runtime,
+        "reference_training_manifest": training,
+    }
+    legacy, _ = plan_business_test_set(**kwargs)
+    (annotations / "review-index.json").unlink()
+    store = AnnotationReviewStore(annotations)
+    for index, status in ((0, "approved"), (1, "approved"), (2, "rejected")):
+        store.set_status("new", index, status, allow_self_review=True)
+
+    manifest, _ = plan_business_test_set(**kwargs)
+
+    assert manifest["source"]["review_store"] == "sqlite"
+    assert manifest["source"]["review_index_sha256"] == store.review_manifest_sha256()
+    assert legacy["source"]["review_store"] == "legacy_json"
+    assert manifest["row_count"] == legacy["row_count"] == 1
+    assert {row["exclusion_reason"] for row in manifest["exclusions"]} == {
+        row["exclusion_reason"] for row in legacy["exclusions"]
+    }
 
 
 def test_freeze_rejects_training_pixel_overlap(tmp_path: Path) -> None:

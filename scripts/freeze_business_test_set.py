@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from backend.services.annotation_review import AnnotationReviewStore  # noqa: E402
 from backend.codex_pipeline.data.class_order import (  # noqa: E402
     class_order_sha256,
     load_runtime_class_order,
@@ -79,6 +80,30 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"JSON root must be an object: {path}")
     return payload
+
+
+def review_decisions(path: Path) -> tuple[dict[str, Any], dict[str, str]]:
+    """Read decisions through AnnotationReviewStore (SQLite is authoritative).
+
+    review-index.json is read directly only for legacy stores without a
+    review database. The identity names which store was read and its hash.
+    """
+    store = AnnotationReviewStore(path)
+    if store.has_database():
+        return store.export_review_manifest()["decisions"], {
+            "review_store": "sqlite",
+            "review_index_path": store.db_path.as_posix(),
+            "review_index_sha256": store.review_manifest_sha256(),
+        }
+    if not store.manifest_path.is_file():
+        raise FileNotFoundError(
+            f"no review store (review-state.sqlite3 or review-index.json): {path}"
+        )
+    return store.export_review_manifest()["decisions"], {
+        "review_store": "legacy_json",
+        "review_index_path": store.manifest_path.as_posix(),
+        "review_index_sha256": sha256_file(store.manifest_path),
+    }
 
 
 def _analysis_ids(path: Path) -> set[str]:
@@ -145,11 +170,7 @@ def plan_business_test_set(
     baseline_annotations_dir = baseline_annotations_dir.expanduser().resolve()
     runtime_config = runtime_config.expanduser().resolve()
     reference_training_manifest = reference_training_manifest.expanduser().resolve()
-    review_path = annotations_dir / "review-index.json"
-    review = _load_json(review_path)
-    decisions = review.get("decisions")
-    if not isinstance(decisions, dict):
-        raise ValueError("review-index decisions must be an object")
+    decisions, review_identity = review_decisions(annotations_dir)
 
     current_ids = _analysis_ids(annotations_dir)
     baseline_ids = _analysis_ids(baseline_annotations_dir)
@@ -345,8 +366,9 @@ def plan_business_test_set(
         "source": {
             "annotations_dir": annotations_dir.as_posix(),
             "baseline_annotations_dir": baseline_annotations_dir.as_posix(),
-            "review_index_path": review_path.as_posix(),
-            "review_index_sha256": sha256_file(review_path),
+            "review_store": review_identity["review_store"],
+            "review_index_path": review_identity["review_index_path"],
+            "review_index_sha256": review_identity["review_index_sha256"],
             "selected_analysis_ids": selected_ids,
             "selection_rule": "analysis_ids_present_in_annotations_dir_but_absent_from_baseline",
         },

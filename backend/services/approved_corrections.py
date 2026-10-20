@@ -32,9 +32,8 @@ def approved_page_corrections(store, image: Image.Image) -> dict:
     corrections = {}
     conflicts = set()
     # ponytail: linear scan; add an invalidated page index if the review store grows.
-    # The SQLite review store is transactional; a decision approved between the two
-    # reads below is simply picked up on the next request.
-    decisions = store._load_manifest()["decisions"]
+    # One queue snapshot carries each element's decision fields (reviewed_at,
+    # source_image_pixel_sha256), so there is no second, possibly newer, read.
     for analysis in store.list_queue()["analyses"]:
         approved = [e for e in analysis["elements"] if e["review_status"] == "approved"
                     and not e["stale_decision"] and e["crop_exists"]]
@@ -47,8 +46,7 @@ def approved_page_corrections(store, image: Image.Image) -> dict:
         except (OSError, ValueError):
             continue
         for element in approved:
-            decision = decisions.get(element["key"], {})
-            if decision.get("source_image_pixel_sha256") not in (None, identity):
+            if element.get("source_image_pixel_sha256") not in (None, identity):
                 continue
             bbox = element["bbox"]
             if (len(bbox) != 4 or any(isinstance(v, bool) or not isinstance(v, int) for v in bbox)):
@@ -72,9 +70,9 @@ def approved_page_corrections(store, image: Image.Image) -> dict:
                     "confidence": 1.0, "confidence_kind": "human_approval",
                     "rejected": False, "top_k": [], "source": "approved_correction",
                     "review": {"decision_id": element["key"],
-                               "reviewed_at": decision.get("reviewed_at"),
+                               "reviewed_at": element.get("reviewed_at"),
                                "image_pixel_sha256": identity}}
-            if previous is None or (decision.get("reviewed_at") or "") > (previous["review"]["reviewed_at"] or ""):
+            if previous is None or (element.get("reviewed_at") or "") > (previous["review"]["reviewed_at"] or ""):
                 corrections[key] = item
     return {"image_pixel_sha256": identity,
             "elements": [] if conflicts else list(corrections.values()),

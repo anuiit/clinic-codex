@@ -30,11 +30,19 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     store = AnnotationReviewStore(args.annotations_dir)
+    if not store.has_database():
+        print(
+            f"error: no review database at {store.db_path}; import the legacy review-index.json first: "
+            f'python scripts/migrate_annotation_reviews.py --annotations-dir "{store.annotations_dir}" --apply',
+            file=sys.stderr,
+        )
+        return 2
     queue = store.list_queue()
     elements = {element["key"]: element for analysis in queue["analyses"] for element in analysis["elements"]}
     changes = []
     unresolved = []
-    with sqlite3.connect(store.db_path) as connection:
+    # mode=rw: never create a database file as a side effect.
+    with sqlite3.connect(f"{store.db_path.as_uri()}?mode=rw", uri=True) as connection:
         for key, raw in connection.execute("SELECT key, decision_json FROM review_decisions"):
             old = json.loads(raw)
             element = elements.get(key)

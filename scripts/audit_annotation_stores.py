@@ -4,7 +4,9 @@
 The report replaces path/mtime-dependent review fingerprints with a proposed
 content identity for comparison only.  It identifies exact cross-store
 matches, duplicate source pages, label conflicts, stale legacy decisions, and
-rows that require manual re-attestation.  It never rewrites review-index.json.
+rows that require manual re-attestation.  Decisions are read through
+AnnotationReviewStore (review-state.sqlite3; review-index.json only for legacy
+stores) and are never rewritten.
 """
 
 from __future__ import annotations
@@ -80,6 +82,30 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def review_decisions(path: Path) -> tuple[dict[str, Any], dict[str, str]]:
+    """Read decisions through AnnotationReviewStore (SQLite is authoritative).
+
+    review-index.json is read directly only for legacy stores without a
+    review database. The identity names which store was read and its hash.
+    """
+    store = AnnotationReviewStore(path)
+    if store.has_database():
+        return store.export_review_manifest()["decisions"], {
+            "review_store": "sqlite",
+            "review_index_path": store.db_path.as_posix(),
+            "review_index_sha256": store.review_manifest_sha256(),
+        }
+    if not store.manifest_path.is_file():
+        raise FileNotFoundError(
+            f"no review store (review-state.sqlite3 or review-index.json): {path}"
+        )
+    return store.export_review_manifest()["decisions"], {
+        "review_store": "legacy_json",
+        "review_index_path": store.manifest_path.as_posix(),
+        "review_index_sha256": sha256_file(store.manifest_path),
+    }
+
+
 def _queue_by_key(store: AnnotationReviewStore) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     queue = store.list_queue()
     by_key: dict[str, dict[str, Any]] = {}
@@ -91,16 +117,14 @@ def _queue_by_key(store: AnnotationReviewStore) -> tuple[dict[str, dict[str, Any
 
 def scan_store(path: Path, *, role: str) -> dict[str, Any]:
     path = path.expanduser().resolve()
-    review_path = path / "review-index.json"
-    review = _load_json(review_path)
-    decisions = review.get("decisions")
-    if not isinstance(decisions, dict):
-        raise ValueError(f"review-index decisions must be an object: {review_path}")
+    decisions, review_identity = review_decisions(path)
     queue, diagnostics = _queue_by_key(AnnotationReviewStore(path))
 
     rows: list[dict[str, Any]] = []
     inventory: list[dict[str, Any]] = []
-    for analysis_dir in sorted(item for item in path.iterdir() if item.is_dir()):
+    for analysis_dir in sorted(
+        item for item in path.iterdir() if item.is_dir() and not item.name.startswith(".")
+    ):
         metadata_path = analysis_dir / "metadata.json"
         image_path = analysis_dir / "image.png"
         if not metadata_path.is_file() or not image_path.is_file():
@@ -192,7 +216,8 @@ def scan_store(path: Path, *, role: str) -> dict[str, Any]:
     return {
         "role": role,
         "path": str(path),
-        "review_index_sha256": sha256_file(review_path),
+        "review_store": review_identity["review_store"],
+        "review_index_sha256": review_identity["review_index_sha256"],
         "source_files_sha256": canonical_json_sha(inventory),
         "analysis_count": len({row["analysis_id"] for row in rows}),
         "row_count": len(rows),

@@ -3,12 +3,16 @@
 """Tests for local admin annotation review manifest behavior."""
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import shutil
 import sqlite3
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from backend.services.annotation_review import (
@@ -349,6 +353,9 @@ def test_legacy_import_requires_explicit_apply_and_keeps_verified_backup(tmp_pat
     legacy_path.write_text(json.dumps(manifest), encoding="utf-8")
     preview = store.preview_legacy_import()
     assert preview["decisions"] == 1
+    assert preview["valid_decisions"] == 1
+    assert preview["valid_by_status"]["approved"] == 1
+    assert preview["stale_decisions"] == 0
     assert not store.db_path.exists()
     assert store.list_queue()["counts"]["trainable"] == 1
     try:
@@ -397,28 +404,172 @@ def test_legacy_import_normalizes_decimal_bboxes_and_quarantines_unusable_ones(t
     assert "legacy-boxes:2" not in imported
 
 
-def test_legacy_import_survives_moving_annotations_between_computers(tmp_path):
-    source = tmp_path / "original" / "annotations"
-    _save(source, "moved-page", count=1)
-    metadata = json.loads((source / "moved-page" / "metadata.json").read_text())
-    crop = source / "moved-page" / "elements" / "0.png"
+def _legacy_path_bound_store(root: Path, analysis_id: str = "moved-page") -> None:
+    _save(root, analysis_id, count=1)
+    metadata = json.loads((root / analysis_id / "metadata.json").read_text())
     old_fingerprint = _legacy_source_fingerprint(
-        analysis_id="moved-page", uploaded_at=metadata["uploaded_at"],
-        annotation=metadata["annotations"][0], crop_path=crop,
+        analysis_id=analysis_id, uploaded_at=metadata["uploaded_at"],
+        annotation=metadata["annotations"][0], crop_path=root / analysis_id / "elements" / "0.png",
     )
-    (source / "review-index.json").write_text(json.dumps({"schema_version": 1, "decisions": {
-        "moved-page:0": {"analysis_id": "moved-page", "index": 0, "status": "approved",
-                         "source_fingerprint": old_fingerprint, "class_name": "class-0",
-                         "bbox": [0.2, 0, 4, 4], "reviewed_at": "2026-01-01T00:00:00+00:00"}
+    (root / "review-index.json").write_text(json.dumps({"schema_version": 1, "decisions": {
+        f"{analysis_id}:0": {"analysis_id": analysis_id, "index": 0, "status": "approved",
+                             "source_fingerprint": old_fingerprint, "class_name": "class-0",
+                             "bbox": [0.2, 0, 4, 4], "reviewed_at": "2026-01-01T00:00:00+00:00"}
     }}))
-    imported = tmp_path / "new-pc" / "annotations"
-    shutil.copytree(source, imported)
-    original_metadata = (imported / "moved-page" / "metadata.json").read_bytes()
-    store = AnnotationReviewStore(imported)
-    assert store.import_legacy_manifest()["importable_decisions"] == 1
-    assert store.list_queue()["counts"]["trainable"] == 1
-    assert (imported / "moved-page" / "metadata.json").read_bytes() == original_metadata
 
-    moved_again = tmp_path / "another-pc" / "annotations"
-    shutil.copytree(imported, moved_again)
-    assert AnnotationReviewStore(moved_again).list_queue()["counts"]["trainable"] == 1
+
+def test_legacy_import_on_original_computer_survives_later_moves(tmp_path):
+    source = tmp_path / "original" / "annotations"
+    _legacy_path_bound_store(source)
+    original_metadata = (source / "moved-page" / "metadata.json").read_bytes()
+    store = AnnotationReviewStore(source)
+    result = store.import_legacy_manifest()
+    assert result["importable_decisions"] == 1
+    assert result["valid_decisions"] == 1 and result["stale_decisions"] == 0
+    assert store.list_queue()["counts"]["trainable"] == 1
+    assert (source / "moved-page" / "metadata.json").read_bytes() == original_metadata
+
+    # The imported decision carries the path-independent fingerprint.
+    moved = tmp_path / "new-pc" / "annotations"
+    shutil.copytree(source, moved)
+    assert AnnotationReviewStore(moved).list_queue()["counts"]["trainable"] == 1
+
+
+def test_legacy_import_after_move_keeps_unverifiable_decision_stale(tmp_path):
+    source = tmp_path / "original" / "annotations"
+    _legacy_path_bound_store(source)
+    moved = tmp_path / "new-pc" / "annotations"
+    shutil.copytree(source, moved)
+    store = AnnotationReviewStore(moved)
+    stored = json.loads((moved / "review-index.json").read_text())["decisions"]["moved-page:0"]
+
+    preview = store.preview_legacy_import()
+    assert preview["valid_decisions"] == 0
+    assert preview["stale_decisions"] == 1
+    assert preview["stale_keys"] == ["moved-page:0"]
+
+    result = store.import_legacy_manifest()
+    assert result["status"] == "imported"
+    queue = store.list_queue()
+    assert queue["counts"]["trainable"] == 0
+    assert queue["counts"]["approved"] == 0
+    [element] = queue["analyses"][0]["elements"]
+    assert element["stale_decision"] is True
+    imported = store.export_review_manifest()["decisions"]["moved-page:0"]
+    assert imported["source_fingerprint"] == stored["source_fingerprint"]
+
+
+def test_legacy_import_keeps_mismatched_fingerprint_stale(tmp_path):
+    root = tmp_path / "annotations"
+    _save(root, "stale-page", count=2)
+    store = AnnotationReviewStore(root)
+    elements = store.list_queue()["analyses"][0]["elements"]
+    decisions = {element["key"]: {
+        "analysis_id": "stale-page", "index": element["index"], "status": "approved",
+        "source_fingerprint": element["source_fingerprint"], "class_name": element["class_name"],
+        "bbox": element["bbox"], "reviewed_at": "2026-01-01T00:00:00+00:00",
+    } for element in elements}
+    decisions["stale-page:1"]["source_fingerprint"] = "0" * 64
+    (root / "review-index.json").write_text(json.dumps({"schema_version": 1, "decisions": decisions}))
+
+    preview = store.preview_legacy_import()
+    assert preview["valid_decisions"] == 1
+    assert preview["stale_keys"] == ["stale-page:1"]
+    store.import_legacy_manifest()
+    assert _status_map(store.list_queue(), "stale-page") == {0: "approved", 1: "pending"}
+    assert store.list_queue()["counts"]["trainable"] == 1
+    assert store.export_review_manifest()["decisions"]["stale-page:1"]["source_fingerprint"] == "0" * 64
+
+
+def _legacy_store_with_one_approval(root: Path) -> AnnotationReviewStore:
+    _save(root, "legacy-1", count=1)
+    store = AnnotationReviewStore(root)
+    source = store.list_queue()["analyses"][0]["elements"][0]
+    (root / "review-index.json").write_text(json.dumps({"schema_version": 1, "decisions": {"legacy-1:0": {
+        "analysis_id": "legacy-1", "index": 0, "status": "approved",
+        "source_fingerprint": source["source_fingerprint"], "class_name": "class-0",
+        "bbox": source["bbox"], "reviewed_at": "2026-01-01T00:00:00+00:00",
+    }}}))
+    return store
+
+
+def test_empty_database_file_is_treated_as_absent(tmp_path):
+    root = tmp_path / "annotations"
+    store = _legacy_store_with_one_approval(root)
+    store.db_path.touch()  # what sqlite3.connect() on a missing path leaves behind
+    assert not store.has_database()
+    queue = store.list_queue()
+    assert queue["review_store"]["mode"] == "legacy_readonly"
+    assert queue["counts"]["trainable"] == 1
+    with pytest.raises(AnnotationReviewConflictError):
+        store.set_status("legacy-1", 0, "pending", expected_revision=0)
+    assert store.import_legacy_manifest()["status"] == "imported"
+    assert store.has_database()
+    assert store.list_queue()["counts"]["trainable"] == 1
+
+
+def test_tableless_database_is_absent_and_never_overwritten(tmp_path):
+    root = tmp_path / "annotations"
+    store = _legacy_store_with_one_approval(root)
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute("CREATE TABLE unrelated (x)")
+    before = store.db_path.read_bytes()
+    assert not store.has_database()
+    assert store.list_queue()["counts"]["trainable"] == 1
+    with pytest.raises(AnnotationReviewConflictError):
+        store.import_legacy_manifest()
+    assert store.db_path.read_bytes() == before
+
+
+def test_corrupt_database_is_not_treated_as_absent(tmp_path):
+    root = tmp_path / "annotations"
+    store = _legacy_store_with_one_approval(root)
+    store.db_path.write_bytes(b"corrupt database sentinel")
+    with pytest.raises(sqlite3.DatabaseError):
+        store.has_database()
+    with pytest.raises(sqlite3.DatabaseError):
+        store.list_queue()
+    assert store.db_path.read_bytes() == b"corrupt database sentinel"
+
+
+def test_legacy_import_falls_back_when_hard_links_are_unsupported(tmp_path, monkeypatch):
+    root = tmp_path / "annotations"
+    store = _legacy_store_with_one_approval(root)
+
+    def no_hard_links(src, dst, *args, **kwargs):
+        raise PermissionError("hard links not supported")
+
+    monkeypatch.setattr(os, "link", no_hard_links)
+    assert store.import_legacy_manifest()["status"] == "imported"
+    assert store.has_database()
+    assert store.list_queue()["counts"]["trainable"] == 1
+    assert not list(root.glob(".review-import-*.sqlite3"))
+
+
+def _load_portability_script():
+    script = Path(__file__).resolve().parents[2] / "scripts" / "upgrade_annotation_review_portability.py"
+    spec = importlib.util.spec_from_file_location("upgrade_annotation_review_portability", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_portability_upgrade_refuses_without_review_database(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "annotations"
+    store = _legacy_store_with_one_approval(root)
+    module = _load_portability_script()
+    monkeypatch.setattr(sys, "argv", ["upgrade", "--annotations-dir", str(root), "--apply"])
+    assert module.main() == 2
+    assert "migrate_annotation_reviews.py" in capsys.readouterr().err
+    assert not store.db_path.exists()
+    assert store.list_queue()["review_store"]["mode"] == "legacy_readonly"
+
+
+def test_portability_upgrade_runs_after_import(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "annotations"
+    store = _legacy_store_with_one_approval(root)
+    store.import_legacy_manifest()
+    module = _load_portability_script()
+    monkeypatch.setattr(sys, "argv", ["upgrade", "--annotations-dir", str(root)])
+    assert module.main() == 0
+    assert json.loads(capsys.readouterr().out)["unresolved"] == []

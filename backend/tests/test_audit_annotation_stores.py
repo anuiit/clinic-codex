@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from backend.services.annotation_review import AnnotationReviewStore
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "audit_annotation_stores.py"
@@ -141,6 +143,26 @@ def test_audit_output_is_write_once(tmp_path: Path) -> None:
             str(output),
         ]
     ) == 2
+
+
+def test_audit_reads_decisions_from_sqlite_review_store(tmp_path: Path) -> None:
+    live = tmp_path / "live"
+    historical = tmp_path / "historical"
+    _write_store(live, "live-1", [("alpha", [1, 2, 8, 8], (255, 0, 0))])
+    _write_store(historical, "history-1", [("alpha", [1, 2, 8, 8], (255, 0, 0))])
+    (live / "review-index.json").unlink()
+    store = AnnotationReviewStore(live)
+    store.set_status("live-1", 0, "approved", allow_self_review=True)
+    (live / ".review-backups").mkdir()  # migration leaves this next to the analyses
+
+    report = audit.build_audit(live, historical)
+
+    stores = {item["role"]: item for item in report["stores"]}
+    assert stores["live"]["review_store"] == "sqlite"
+    assert stores["live"]["review_index_sha256"] == store.review_manifest_sha256()
+    assert stores["live"]["decision_counts"].get("approved") == 1
+    assert stores["live"]["current_trainable_count"] == 1
+    assert stores["historical"]["review_store"] == "legacy_json"
 
 
 def test_audit_reports_review_decisions_without_annotations_as_orphans(tmp_path: Path) -> None:
