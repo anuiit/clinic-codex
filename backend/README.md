@@ -6,6 +6,9 @@ Default runtime: `http://localhost:7117` (`HOST=127.0.0.1`, `PORT=7117`).
 
 ## Run
 
+The supported interpreter is Python 3.11 (`backend/.python-version`, CI and
+both installers refuse other minor versions).
+
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -121,9 +124,39 @@ backend/annotations/<analysis_id>/
 - writes through a temporary directory before replacing the target folder;
 - no longer writes directly to `training_data/Elements` (the parameter remains for backward compatibility).
 
-Admin review decisions are stored separately in `backend/annotations/review-index.json` by `backend/services/annotation_review.py`. Review decisions are element-level (`analysis_id:index`), while analyses are display groups. Existing annotations with no review entry appear as `pending`; only canonical, non-stale elements whose review status is exactly `approved` are yielded for retraining. Missing folders, metadata rows, crops, orphan manifest entries, and stale source fingerprints are diagnosed and excluded from training.
+Admin review decisions are stored separately in the SQLite database `backend/annotations/review-state.sqlite3` by `backend/services/annotation_review.py` (decisions plus a full revision history). Review decisions are element-level (`analysis_id:index`), while analyses are display groups. Existing annotations with no review entry appear as `pending`; only canonical, non-stale elements whose review status is exactly `approved` are yielded for retraining. Missing folders, metadata rows, crops, orphan manifest entries, and stale source fingerprints are diagnosed and excluded from training.
 
-`POST /admin/annotations/<analysis_id>/<index>/modify` can correct a submitted element after review. It validates/sanitizes `class_name`, clamps and normalizes `[x, y, width, height]`, regenerates the crop from the stored `image.png`, rewrites metadata only after the crop exists, and records a fresh manifest decision. By default, a modification becomes `pending`; pass `approve_after_save: true` (or `status: "approved"`) only when the corrected evidence should be immediately trainable.
+`POST /admin/annotations/<analysis_id>/<index>/modify` can correct a submitted element after review. It validates/sanitizes `class_name`, clamps and normalizes `[x, y, width, height]`, regenerates the crop from the stored `image.png`, rewrites metadata only after the crop exists, and records a fresh review decision (new revision). By default, a modification becomes `pending`; pass `approve_after_save: true` (or `status: "approved"`) only when the corrected evidence should be immediately trainable.
+
+### Review store migration and archive merge
+
+Older installations kept decisions in `backend/annotations/review-index.json`. That file is now read-only: the admin queue still displays it, but every review write and training launch is refused until it is imported explicitly. Run the steps in this order (each script previews unless `--apply` is given):
+
+```bash
+# 1. Import review-index.json into review-state.sqlite3 (verified backup in .review-backups/).
+#    The preview reports valid_decisions, stale_decisions and stale_keys.
+backend/.venv/bin/python scripts/migrate_annotation_reviews.py --annotations-dir backend/annotations
+backend/.venv/bin/python scripts/migrate_annotation_reviews.py --annotations-dir backend/annotations --apply
+# 2. Optional, before moving the store to another computer: make crop paths relative.
+#    Refuses to run until step 1 created the database.
+backend/.venv/bin/python scripts/upgrade_annotation_review_portability.py --annotations-dir backend/annotations --apply
+```
+
+Only decisions whose stored source fingerprint still matches the submitted annotation (current or legacy path-bound form, crop unchanged) are imported as valid. Anything else keeps its original fingerprint and stays stale: shown as `pending`, never trainable, until it is reviewed again. Path-bound legacy fingerprints only verify on the computer that wrote them, so migrate before moving a store.
+
+To add a reviewed ZIP archive to an installation:
+
+```bash
+# 1. Import the archive into its own isolated store (writes review-index.json there).
+#    --re-attest-verified re-creates decisions after checking labels, boxes and source pixels.
+backend/.venv/bin/python scripts/import_annotation_archive.py archive.zip --output /tmp/archive-store --apply
+# 2. Migrate that isolated store to SQLite.
+backend/.venv/bin/python scripts/migrate_annotation_reviews.py --annotations-dir /tmp/archive-store --apply
+# 3. Merge it into the application store (refuses analysis-ID or decision collisions; backs up the target DB).
+backend/.venv/bin/python scripts/merge_annotation_archive.py --source /tmp/archive-store --target backend/annotations --apply
+```
+
+`scripts/audit_annotation_stores.py` and `scripts/freeze_business_test_set.py` read decisions through the same store (SQLite first, JSON only for legacy stores). If the review store fails while analysing a page, `/segment` still answers with model output and reports `provenance.corrections_unavailable: true`.
 
 ## Image upload errors
 
