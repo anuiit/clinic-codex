@@ -1,5 +1,7 @@
 import io
 import json
+import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 
 from PIL import Image
@@ -48,9 +50,11 @@ def test_conflicts_deduplication_and_legacy_crop_verification(tmp_path):
     store.set_status("conflict", 0, "rejected")
     store.set_status("duplicate", 0, "rejected")
     # Legacy records lack the global page digest; still verify the actual crop pixels.
-    manifest = store._load_manifest()
-    manifest["decisions"]["first:0"].pop("source_image_pixel_sha256")
-    store._save_manifest(manifest)
+    with closing(sqlite3.connect(store.db_path)) as connection, connection:
+        (raw,) = connection.execute("SELECT decision_json FROM review_decisions WHERE key = 'first:0'").fetchone()
+        decision = json.loads(raw)
+        decision.pop("source_image_pixel_sha256")
+        connection.execute("UPDATE review_decisions SET decision_json = ? WHERE key = 'first:0'", (json.dumps(decision),))
     assert len(approved_page_corrections(store, image)["elements"]) == 1
     Image.new("RGB", (3, 3), "red").save(store.annotations_dir / "first" / "elements" / "0.png")
     store.set_status("first", 0, "approved")

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import './styles/app-theme.css';
 import './components/ui/ui-primitives.css';
 import appChromeStyles from './components/AppChrome.module.css';
-import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router';
+import { createBrowserRouter, Navigate, Route, RouterProvider, Routes, useNavigate, useParams, useSearchParams } from 'react-router';
 import { AuthProvider, AuthStatusMenu, useAuth } from './auth/AuthContext';
 import { RouteGuard } from './auth/RouteGuard';
 import LoginPage from './pages/LoginPage';
@@ -30,7 +30,7 @@ function getInitialTheme(): ThemeMode {
 }
 
 function isAdminTab(value: string | undefined): value is AdminTab {
-  return value === 'review' || value === 'dataset' || value === 'training';
+  return value === 'review' || value === 'dataset' || value === 'classes' || value === 'training' || value === 'compare';
 }
 function AdminAnnotationsLanding() {
   const { authEnabled, hasPermission } = useAuth();
@@ -76,25 +76,34 @@ function AdminAnnotationsRoute({
 }) {
   const navigate = useNavigate();
   const { tab } = useParams<{ tab?: string }>();
+  const { authEnabled, hasPermission } = useAuth();
+  const [searchParams] = useSearchParams();
 
   if (!isAdminTab(tab)) {
     return <Navigate to="/admin/annotations/review" replace />;
   }
 
   return (
-    <RouteGuard permission={tab === 'training' ? 'training.read' : 'annotation.queue.read'}>
+    <RouteGuard permission={tab === 'training' || tab === 'compare' ? 'training.read' : 'annotation.queue.read'}>
       <AdminAnnotationsPage
         themeMode={themeMode}
         onToggleTheme={onToggleTheme}
         initialTab={tab}
+        canReadQueue={!authEnabled || hasPermission('annotation.queue.read')}
+        canReadTraining={!authEnabled || hasPermission('training.read')}
+        canRunTraining={!authEnabled || hasPermission('training.run')}
+        guardRouteTransitions
+        canReview={!authEnabled || hasPermission('annotation.review')}
         onNavigateTab={(nextTab) => navigate(`/admin/annotations/${nextTab}`)}
+        comparisonVersionId={searchParams.get('version') ?? undefined}
+        onCompareCandidate={(versionId) => navigate(`/admin/annotations/compare?version=${encodeURIComponent(versionId)}`)}
         authSlot={<AuthStatusMenu />}
       />
     </RouteGuard>
   );
 }
 
-function App() {
+function AppContent() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialTheme);
 
   useEffect(() => {
@@ -107,8 +116,7 @@ function App() {
   };
 
   return (
-    <BrowserRouter>
-      <RuntimeVersionProvider>
+    <RuntimeVersionProvider>
         <AuthProvider>
           <div className={`${appChromeStyles.owner} app-shell flex h-screen w-screen flex-col overflow-hidden max-md:h-auto max-md:min-h-[100dvh] max-md:overflow-y-auto`} data-theme={themeMode}>
             <main className="flex-1 overflow-hidden max-md:flex-none max-md:overflow-visible">
@@ -141,7 +149,7 @@ function App() {
                 path="/annotate/:id"
                 element={(
                   <RouteGuard>
-                    <AnnotationPage themeMode={themeMode} onToggleTheme={toggleTheme} authSlot={<AuthStatusMenu />} />
+                    <AnnotationPage themeMode={themeMode} onToggleTheme={toggleTheme} authSlot={<AuthStatusMenu />} guardRouteTransitions />
                   </RouteGuard>
                 )}
               />
@@ -150,9 +158,13 @@ function App() {
             </main>
           </div>
         </AuthProvider>
-      </RuntimeVersionProvider>
-    </BrowserRouter>
+    </RuntimeVersionProvider>
   );
+}
+
+function App() {
+  const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AppContent /> }]));
+  return <RouterProvider router={router} />;
 }
 
 export default App;

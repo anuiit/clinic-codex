@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getClasses } from "../../services/api";
+import { getAnnotationClasses } from "../../services/api";
 import { getAnalysisById } from "../../services/storage";
 import type { AnalysisRecord, AnnotationStatus, DetectedElement } from "../../types";
 
@@ -21,6 +21,8 @@ export function useAnnotationRecord(id: string | undefined, initialFocusedIdx: n
   const [classes, setClasses] = useState<string[]>([]);
   const [customClasses, setCustomClasses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [storageError, setStorageError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [focusedIdx, setFocusedIdx] = useState<number | null>(initialFocusedIdx);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [listHoveredIdx, setListHoveredIdx] = useState<number | null>(null);
@@ -33,13 +35,23 @@ export function useAnnotationRecord(id: string | undefined, initialFocusedIdx: n
       setRecord(null);
       setElements([]);
       setAnnotationStatus({});
+      setStorageError(false);
 
       if (!id) {
         if (active) setLoading(false);
         return;
       }
 
-      const rec = await getAnalysisById(id);
+      let rec: AnalysisRecord | null;
+      try {
+        rec = await getAnalysisById(id);
+      } catch {
+        if (active) {
+          setStorageError(true);
+          setLoading(false);
+        }
+        return;
+      }
       if (!active) return;
       setRecord(rec);
 
@@ -49,9 +61,10 @@ export function useAnnotationRecord(id: string | undefined, initialFocusedIdx: n
       }
       setElements(cloneElements(rec.result.elements));
       setAnnotationStatus(rec.annotationStatus ?? {});
+      setFocusedIdx(initialFocusedIdx !== null && initialFocusedIdx < rec.result.elements.length ? initialFocusedIdx : null);
 
       try {
-        const classesResult = await getClasses();
+        const classesResult = await getAnnotationClasses();
         if (active) setClasses(classesResult.class_names);
       } catch {
         // failed to load classes
@@ -63,7 +76,7 @@ export function useAnnotationRecord(id: string | undefined, initialFocusedIdx: n
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [id, initialFocusedIdx, loadAttempt]);
 
   return {
     cardRefs,
@@ -73,6 +86,8 @@ export function useAnnotationRecord(id: string | undefined, initialFocusedIdx: n
     classes,
     customClasses,
     loading,
+    storageError,
+    retryLoad: () => setLoadAttempt((attempt) => attempt + 1),
     focusedIdx,
     hoveredIdx,
     listHoveredIdx,

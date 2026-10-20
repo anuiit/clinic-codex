@@ -7,6 +7,7 @@ import {
 } from "react";
 import { ActionButton, PillButton } from "../../components/ui/AdminPrimitives";
 import { ReferenceThumb } from "./ReferenceGlyphArt";
+import { AdminMediaImage } from "./AdminMediaImage";
 import { adminAnnotationMediaUrl } from "../../services/api";
 import type { AdminAnnotationElement, AdminAnnotationModifyPayload, AdminAnnotationQueue, AdminAnnotationReviewStatus } from "../../types";
 import { formatBbox, reviewRowSignal, reviewRows, REVIEW_STATUS_FILTER_LABEL, STATUS_LABEL, type ReviewRow, type ReviewStatusFilter } from "./model";
@@ -70,7 +71,7 @@ function AdminElementRow({
       >
         <ReferenceThumb>
           {element.crop_exists ? (
-            <img
+            <AdminMediaImage
               src={adminAnnotationMediaUrl(element.crop_url)}
               alt={cropAlt}
             />
@@ -117,7 +118,7 @@ function ReviewQueueRow({
       selected={selected}
       rowLabel={rowLabel}
       cropAlt={`Découpe de triage ${element.index} pour ${element.class_name}`}
-      detail={<>{element.bbox[2]}×{element.bbox[3]}</>}
+      detail={<>{element.bbox.length === 4 ? `${element.bbox[2]}×${element.bbox[3]}` : "Zone à corriger"}</>}
       diagnostic={signal}
       accessibleSummary={detailSummary}
       onSelect={onSelect}
@@ -137,14 +138,14 @@ function ReviewFilterSummary({
   total: number;
   filtered: number;
   statusFilter: ReviewStatusFilter;
-  classFilter: string;
+  classFilter: string | null;
   searchQuery: string;
   filteredRows: ReviewRow[];
   onClear: () => void;
 }) {
   const hasActiveFilters =
     statusFilter !== "all" ||
-    classFilter !== "all" ||
+    classFilter !== null ||
     Boolean(searchQuery.trim());
   const visibleStatusCounts = filteredRows.reduce<
     Record<AdminAnnotationReviewStatus, number>
@@ -175,7 +176,7 @@ function ReviewFilterSummary({
             {statusFilter !== "all" ? (
               <li>Statut : {REVIEW_STATUS_FILTER_LABEL[statusFilter]}</li>
             ) : null}
-            {classFilter !== "all" ? <li>Classe : {classFilter}</li> : null}
+            {classFilter !== null ? <li>Classe : {classFilter || "Sans nom (non renseigné)"}</li> : null}
             {searchQuery.trim() ? <li>Recherche : {searchQuery.trim()}</li> : null}
           </ul>
         ) : (
@@ -196,17 +197,22 @@ function ReviewFilterSummary({
 
 export function ReviewTab({
   queue,
+  readOnly = false,
   selectedKey,
   mutatingKey,
   editingKey,
   onSelect,
   onReview,
   onModify,
+  onRestore,
+  onEditingDirtyChange,
   onEdit,
   onAnnulerEdit,
   classNames,
+  initialClassFilter = null,
 }: {
   queue: AdminAnnotationQueue;
+  readOnly?: boolean;
   selectedKey: string | null;
   mutatingKey: string | null;
   editingKey: string | null;
@@ -214,39 +220,42 @@ export function ReviewTab({
   onReview: (
     element: AdminAnnotationElement,
     status: AdminAnnotationReviewStatus,
-  ) => void;
+  ) => Promise<boolean>;
   onModify: (
     element: AdminAnnotationElement,
     payload: AdminAnnotationModifyPayload,
   ) => void;
+  onRestore: (element: AdminAnnotationElement, targetRevision: number) => void;
+  onEditingDirtyChange: (dirty: boolean) => void;
   classNames: string[];
+  initialClassFilter?: string | null;
   onEdit: (element: AdminAnnotationElement) => void;
   onAnnulerEdit: () => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<ReviewStatusFilter>("all");
-  const [classFilter, setClassFilter] = useState("all");
+  const [classFilter, setClassFilter] = useState<string | null>(initialClassFilter);
   const [searchQuery, setSearchQuery] = useState("");
   const rows = useMemo(() => reviewRows(queue), [queue]);
   const classOptions = useMemo(
     () =>
       [
-        ...new Set(rows.map((row) => row.element.class_name || "Sans nom")),
+        ...new Set(rows.map((row) => row.element.class_name ?? "")),
       ].sort(),
     [rows],
   );
   const filteredRows = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
     return rows.filter((row) => {
-      const className = row.element.class_name || "Sans nom";
+      const className = row.element.class_name ?? "";
       const statusMatches =
         statusFilter === "all" || row.element.review_status === statusFilter;
-      const classMatches = classFilter === "all" || className === classFilter;
+      const classMatches = classFilter === null || className === classFilter;
       const queryMatches =
         !normalizedQuery ||
         [
           row.analysis.analysis_id,
           String(row.element.index),
-          className,
+          className || "Sans nom",
           formatBbox(row.element.bbox),
           ...row.diagnostics,
         ]
@@ -259,7 +268,7 @@ export function ReviewTab({
 
   const clearReviewFilters = () => {
     setStatusFilter("all");
-    setClassFilter("all");
+    setClassFilter(null);
     setSearchQuery("");
   };
 
@@ -282,6 +291,17 @@ export function ReviewTab({
   const selectedIndex = filteredRows.findIndex(
     (row) => row.element.key === selectedRow?.element.key,
   );
+  const reviewAndKeepPosition = async (
+    element: AdminAnnotationElement,
+    status: AdminAnnotationReviewStatus,
+  ) => {
+    const index = filteredRows.findIndex((row) => row.element.key === element.key);
+    const neighbor = filteredRows[index + 1] ?? filteredRows[index - 1];
+    const committed = await onReview(element, status);
+    if (committed && statusFilter !== "all" && status !== statusFilter && neighbor) {
+      onSelect(neighbor.element);
+    }
+  };
 
   return (
     <section className={`${styles.owner} admin-split-grid admin-review-workspace`}>
@@ -321,13 +341,13 @@ export function ReviewTab({
             <span>Classe</span>
             <select
               className="ui-select px-2 py-1"
-              value={classFilter}
-              onChange={(event) => setClassFilter(event.target.value)}
+              value={classFilter === null ? "" : `class:${classFilter}`}
+              onChange={(event) => setClassFilter(event.target.value ? event.target.value.slice(6) : null)}
             >
-              <option value="all">Toutes les classes</option>
+              <option value="">Toutes les classes</option>
               {classOptions.map((className) => (
-                <option key={className} value={className}>
-                  {className}
+                <option key={className} value={`class:${className}`}>
+                  {className || "Sans nom (non renseigné)"}
                 </option>
               ))}
             </select>
@@ -389,11 +409,13 @@ export function ReviewTab({
         classNames={classNames}
         filteredRows={filteredRows}
         selectedIndex={selectedIndex}
-        mutating={mutatingKey === selectedRow?.element.key}
+        mutating={readOnly || mutatingKey === selectedRow?.element.key}
         editing={editingKey === selectedRow?.element.key}
         onSelect={onSelect}
-        onReview={onReview}
+        onReview={reviewAndKeepPosition}
         onModify={onModify}
+        onRestore={onRestore}
+        onEditingDirtyChange={onEditingDirtyChange}
         onEdit={onEdit}
         onAnnulerEdit={onAnnulerEdit}
       />

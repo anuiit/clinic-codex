@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { type RefObject } from "react";
 import { Trash2 } from "lucide-react";
 import type { DetectedElement } from "../../types";
 import { appText } from "../../i18n/text";
@@ -21,7 +21,9 @@ interface AnnotationSelectedInspectorProps {
   namingFocusToken: number;
   labels: typeof appText.annotation;
   onCommitElementName: (idx: number, name: string) => void;
+  onNameInputChange?: (name: string) => void;
   onCommitElementNote: (idx: number, note: string) => void;
+  onNoteInputChange?: (note: string) => void;
   onSetElementValidation: (idx: number, submitted: boolean) => void;
   onRemoveElement: (idx: number) => void;
 }
@@ -39,21 +41,13 @@ export function AnnotationSelectedInspector({
   namingFocusToken,
   labels,
   onCommitElementName,
+  onNameInputChange,
   onCommitElementNote,
+  onNoteInputChange,
   onSetElementValidation,
   onRemoveElement,
 }: AnnotationSelectedInspectorProps) {
-  const [noteDraft, setNoteDraft] = useState(focusedElement?.note ?? "");
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- The draft belongs to the selected element and must reset when that selection changes.
-    setNoteDraft(focusedElement?.note ?? "");
-    // Reset the draft only when the selected element changes, not on every
-    // keystroke-driven elements update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordId, focusedIdx]);
-
-  const commitNote = () => {
+  const commitNote = (noteDraft: string) => {
     if (focusedIdx === null) return;
     if (noteDraft.trim() === (focusedElement?.note ?? "")) return;
     onCommitElementNote(focusedIdx, noteDraft);
@@ -145,6 +139,7 @@ export function AnnotationSelectedInspector({
                   labels={labels}
                   index={focusedIdx}
                   onCommit={(name) => onCommitElementName(focusedIdx, name)}
+                  onInputChange={onNameInputChange}
                 />
               </div>
               <ActionButton
@@ -179,11 +174,12 @@ export function AnnotationSelectedInspector({
                 {labels.elementNote}
               </label>
               <textarea
+                key={`${recordId ?? ""}:${focusedIdx}`}
                 id="annotation-element-note"
                 data-testid="annotation-element-note"
-                value={noteDraft}
-                onChange={(event) => setNoteDraft(event.target.value)}
-                onBlur={commitNote}
+                defaultValue={focusedElement.note ?? ""}
+                onChange={(event) => onNoteInputChange?.(event.target.value)}
+                onBlur={(event) => commitNote(event.target.value)}
                 placeholder={labels.elementNotePlaceholder}
                 rows={2}
                 maxLength={2000}

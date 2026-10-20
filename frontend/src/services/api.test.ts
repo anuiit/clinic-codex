@@ -313,16 +313,53 @@ describe("API client contract", () => {
     );
   });
 
+  it("rejects incomplete admin responses before they reach a panel", async () => {
+    axiosMock.get.mockResolvedValue({ data: {} });
+    const api = await loadApi("http://api.test");
+
+    await expect(api.getAdminAnnotationQueue()).rejects.toThrow("Invalid admin annotation queue response");
+    await expect(api.getAdminClasses()).rejects.toThrow("Invalid admin classes response");
+    await expect(api.getAdminAnnotationHistory("a1", 0)).rejects.toThrow("Invalid admin annotation history response");
+    await expect(api.getAdminTrainingSummary()).rejects.toThrow("Invalid admin training summary response");
+  });
+
+  it("rejects a partial annotation element before rendering the triage queue", async () => {
+    axiosMock.get.mockResolvedValueOnce({ data: {
+      counts: { total: 1, pending: 1, approved: 0, rejected: 0, trainable: 0 },
+      diagnostics: [],
+      analyses: [{ analysis_id: "a1", elements: [{ key: "a1:0", bbox: null }] }],
+    } });
+    const api = await loadApi();
+
+    await expect(api.getAdminAnnotationQueue()).rejects.toThrow("Invalid admin annotation queue response");
+  });
+
+  it("keeps an old empty bbox visible so an admin can correct it", async () => {
+    const queue = {
+      counts: { total: 1, pending: 1, approved: 0, rejected: 0, trainable: 0 },
+      diagnostics: [],
+      analyses: [{ analysis_id: "a1", elements: [{
+        key: "a1:0", class_name: "atl", index: 0, revision: 0, bbox: [],
+        review_status: "pending", dataset_split: "excluded", trainable: false,
+        crop_exists: false, crop_url: "/missing",
+      }] }],
+    };
+    axiosMock.get.mockResolvedValueOnce({ data: queue });
+    const api = await loadApi();
+
+    await expect(api.getAdminAnnotationQueue()).resolves.toEqual(queue);
+  });
+
   it("posts element-level local admin review decisions", async () => {
     const mutation = { status: "ok", local_only: true, warning: "local only", element: { key: "analysis 1:0" } };
     axiosMock.post.mockResolvedValueOnce({ data: mutation });
     const api = await loadApi("http://api.test");
 
-    await expect(api.setAdminAnnotationReviewStatus("analysis 1", 0, "approved")).resolves.toEqual(mutation);
+    await expect(api.setAdminAnnotationReviewStatus("analysis 1", 0, "approved", 2)).resolves.toEqual(mutation);
 
     expect(axiosMock.post).toHaveBeenCalledWith(
       "http://api.test/admin/annotations/analysis%201/0/review",
-      { status: "approved" },
+      { status: "approved", expected_revision: 2 },
     );
   });
 
@@ -330,7 +367,7 @@ describe("API client contract", () => {
     const mutation = { status: "ok", local_only: true, warning: "local only", element: { key: "analysis 1:0" } };
     axiosMock.post.mockResolvedValueOnce({ data: mutation });
     const api = await loadApi("http://api.test");
-    const payload = { class_name: "new-atl", bbox: [1, 2, 3, 4] as [number, number, number, number], approve_after_save: true };
+    const payload = { class_name: "new-atl", bbox: [1, 2, 3, 4] as [number, number, number, number], approve_after_save: true, expected_revision: 2 };
 
     await expect(api.modifyAdminAnnotationElement("analysis 1", 0, payload)).resolves.toEqual(mutation);
 
@@ -341,7 +378,14 @@ describe("API client contract", () => {
   });
 
   it("loads local admin training summary and latest job", async () => {
-    const summary = { status: "ok", training_jobs_enabled: false };
+    const summary = {
+      status: "ok",
+      training_jobs_enabled: false,
+      training_snapshot: {},
+      data: { classes: [], split_counts: { train: 0, val: 0, test: 0, excluded: 0 } },
+      launch_disabled_reasons: [],
+      parameters: { editable: { batch_size: { default: 16, min: 1, max: 256 }, device: [] } },
+    };
     const latest = { status: "ok", local_only: true, job: null };
     axiosMock.get.mockResolvedValueOnce({ data: summary }).mockResolvedValueOnce({ data: latest });
     const api = await loadApi("http://api.test");

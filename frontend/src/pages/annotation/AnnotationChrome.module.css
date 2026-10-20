@@ -48,16 +48,17 @@
 :global(.annotation-selected-inspector) {
   position: relative;
   z-index: 40;
-  height: 258px;
+  max-height: min(60%, 32rem);
+  min-height: 0;
   border-bottom: 1px solid var(--border-subtle);
   backdrop-filter: none;
-  overflow: visible;
+  overflow: auto;
 }
 :global(.annotation-selected-inspector .sidebar-header) {
   border-bottom: 0;
 }
 :global(.annotation-selected-inspector__body) {
-  overflow: visible;
+  overflow: auto;
 }
 :global(.annotation-name-combobox) {
   position: relative;

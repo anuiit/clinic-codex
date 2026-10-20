@@ -276,6 +276,8 @@ class ModelRegistry:
         return self.versions_dir / version
 
     def git_short(self) -> str | None:
+        if not (self.repo_root / ".git").exists():
+            return None  # An exported copy must not inherit a parent/home repository's revision.
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "--short=8", "HEAD"],

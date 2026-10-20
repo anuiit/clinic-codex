@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { t as translate } from "../../i18n/annotation.fr";
 import { saveAnnotation } from "../../services/api";
 import { updateElements } from "../../services/storage";
@@ -31,6 +31,18 @@ export function useAnnotationSubmission({
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [persisted, setPersisted] = useState<{ id: string; snapshot: string } | null>(null);
+  const snapshot = JSON.stringify([elements, annotationStatus]);
+  const initialSnapshot = record
+    ? JSON.stringify([record.result.elements, record.annotationStatus ?? {}])
+    : snapshot;
+  const dirty = Boolean(record && snapshot !== (persisted && persisted.id === id ? persisted.snapshot : initialSnapshot));
+
+  useEffect(() => {
+    if (!toast?.ok) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   const handleSave = async () => {
     if (!id) return;
@@ -41,6 +53,7 @@ export function useAnnotationSubmission({
       setSaving(false);
       return;
     }
+    setPersisted({ id, snapshot });
     setToast({ msg: translate("save.localSuccess"), ok: true });
     setSaving(false);
   };
@@ -58,7 +71,6 @@ export function useAnnotationSubmission({
         msg: `${labels.submitBlockedUnnamed} (${unnamedSubmittedIndexes.map((idx) => `#${idx}`).join(", ")})`,
         ok: false,
       });
-      setTimeout(() => setToast(null), 4000);
       return;
     }
     const submittedElements = submittedCandidates.filter(
@@ -75,7 +87,6 @@ export function useAnnotationSubmission({
             : labels.submitBlockedNone,
         ok: false,
       });
-      setTimeout(() => setToast(null), 4000);
       return;
     }
 
@@ -86,6 +97,7 @@ export function useAnnotationSubmission({
         setToast({ msg: translate("save.networkError"), ok: false });
         return;
       }
+      setPersisted({ id, snapshot });
 
       const payload = {
         analysis_id: id,
@@ -107,6 +119,9 @@ export function useAnnotationSubmission({
         let msg = translate("save.networkError");
 
         switch (result.error_code) {
+          case "ANNOTATION_CONFLICT":
+            msg = "Cette analyse a déjà été soumise avec un autre contenu. Corrigez l'élément dans Administration → Trier, puis consultez l'historique. Votre brouillon local est conservé.";
+            break;
           case "VALIDATION_ERROR":
             msg = result.message;
             break;
@@ -132,7 +147,6 @@ export function useAnnotationSubmission({
       }
     } finally {
       setSending(false);
-      setTimeout(() => setToast(null), 4000);
     }
   };
 
@@ -140,6 +154,7 @@ export function useAnnotationSubmission({
     saving,
     sending,
     toast,
+    dirty,
     handleSave,
     handleSendSubmittedForReview,
   };

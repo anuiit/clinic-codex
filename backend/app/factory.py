@@ -1,7 +1,8 @@
 """Flask application factory."""
 from __future__ import annotations
 
-from flask import Flask, request
+import sqlite3
+from flask import Flask, jsonify, request
 
 from backend.app.config import Settings
 from backend.app.errors import ApiError, ModelAssetUnavailable
@@ -55,6 +56,12 @@ def create_app(settings: Settings | None = None, services=None) -> Flask:
     @app.errorhandler(ModelAssetUnavailable)
     def handle_model_asset_unavailable(error: ModelAssetUnavailable):
         return error.to_response()
+
+    @app.errorhandler(sqlite3.DatabaseError)
+    def handle_database_unavailable(error):
+        app.logger.error("Local database unavailable: %s", error)
+        return jsonify({"error": "Stockage local indisponible. Conservez la base et restaurez une sauvegarde vérifiée.",
+                        "error_code": "DATABASE_UNAVAILABLE"}), 503
 
     register_routes(app, settings, app.extensions["clinic_services"])
     return app

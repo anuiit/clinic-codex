@@ -10,6 +10,8 @@ import type {
   SaveAnnotationResult,
   SaveAnnotationErrorCode,
   AdminAnnotationModifyPayload,
+  AdminAnnotationHistory,
+  AdminClassCatalogue,
   AdminAnnotationQueue,
   AdminAnnotationMutationResponse,
   AdminAnnotationReviewStatus,
@@ -137,6 +139,31 @@ export async function getClasses(options?: ApiRequestOptions): Promise<ClassesRe
   return getData<ClassesResult>('/classes', options);
 }
 
+export async function getAnnotationClasses(options?: ApiRequestOptions): Promise<ClassesResult> {
+  return getData<ClassesResult>('/annotation-classes', options);
+}
+
+export async function getAdminClasses(options?: ApiRequestOptions): Promise<AdminClassCatalogue> {
+  return requireAdminClasses(await getData<AdminClassCatalogue>('/admin/classes', options));
+}
+
+export async function confirmAdminClass(className: string, revision: string): Promise<AdminClassCatalogue> {
+  return requireAdminClasses(await postData<AdminClassCatalogue>('/admin/classes', { class_name: className, expected_revision: revision }));
+}
+
+function requireAdminClasses(data: AdminClassCatalogue): AdminClassCatalogue {
+  if (!Array.isArray(data?.classes) || typeof data.revision !== 'string' ||
+      !data.classes.every((item) => item && typeof item.class_name === 'string' &&
+        ['active', 'candidate', 'unconfirmed'].includes(item.status) &&
+        (item.class_label === null || Number.isInteger(item.class_label)) &&
+        item.counts && (['pending', 'approved', 'rejected'] as const)
+          .every((key) => Number.isInteger(item.counts[key])) &&
+        Number.isInteger(item.trainable_count))) {
+    throw new Error('Invalid admin classes response');
+  }
+  return data;
+}
+
 export async function getSimilar(
   imageDataUrl: string,
   bbox: [number, number, number, number],
@@ -225,19 +252,67 @@ export async function saveAnnotation(
 export async function getAdminAnnotationQueue(
   options?: ApiRequestOptions,
 ): Promise<AdminAnnotationQueue> {
-  return getData<AdminAnnotationQueue>('/admin/annotations', options);
+  const data = await getData<AdminAnnotationQueue>('/admin/annotations', options);
+  if (!Array.isArray(data?.analyses) || !Array.isArray(data.diagnostics) ||
+      !data.counts ||
+      !(['total', 'pending', 'approved', 'rejected', 'trainable'] as const)
+        .every((key) => Number.isFinite(data.counts[key])) ||
+      !data.analyses.every((analysis) => analysis && typeof analysis.analysis_id === 'string' &&
+        Array.isArray(analysis.elements) && analysis.elements.every((element) =>
+          element && typeof element.key === 'string' && typeof element.class_name === 'string' &&
+          Number.isInteger(element.index) && Number.isInteger(element.revision) &&
+          Array.isArray(element.bbox) &&
+          element.bbox.every(Number.isFinite) &&
+          ['pending', 'approved', 'rejected'].includes(element.review_status) &&
+          ['train', 'val', 'test', 'excluded'].includes(element.dataset_split) &&
+          typeof element.trainable === 'boolean' && typeof element.crop_exists === 'boolean' &&
+          typeof element.crop_url === 'string'))) {
+    throw new Error('Invalid admin annotation queue response');
+  }
+  return data;
 }
 
 export async function setAdminAnnotationReviewStatus(
   analysisId: string,
   index: number,
   status: AdminAnnotationReviewStatus,
+  expectedRevision: number,
   options?: ApiRequestOptions,
 ): Promise<AdminAnnotationMutationResponse> {
   return postData<AdminAnnotationMutationResponse>(
     `/admin/annotations/${encodeURIComponent(analysisId)}/${index}/review`,
-    { status },
+    { status, expected_revision: expectedRevision },
     options,
+  );
+}
+
+export async function getAdminAnnotationHistory(
+  analysisId: string,
+  index: number,
+): Promise<AdminAnnotationHistory> {
+  const data = await getData<AdminAnnotationHistory>(
+    `/admin/annotations/${encodeURIComponent(analysisId)}/${index}/history`,
+  );
+  if (!Number.isInteger(data?.revision) || !Array.isArray(data.history) ||
+      !data.history.every((entry) => entry && Number.isInteger(entry.revision) &&
+        typeof entry.class_name === 'string' &&
+        ['pending', 'approved', 'rejected'].includes(entry.status) &&
+        Array.isArray(entry.bbox) && entry.bbox.length === 4 &&
+        entry.bbox.every(Number.isFinite))) {
+    throw new Error('Invalid admin annotation history response');
+  }
+  return data;
+}
+
+export async function restoreAdminAnnotationElement(
+  analysisId: string,
+  index: number,
+  targetRevision: number,
+  expectedRevision: number,
+): Promise<AdminAnnotationMutationResponse> {
+  return postData<AdminAnnotationMutationResponse>(
+    `/admin/annotations/${encodeURIComponent(analysisId)}/${index}/restore`,
+    { target_revision: targetRevision, expected_revision: expectedRevision },
   );
 }
 
@@ -257,13 +332,40 @@ export async function modifyAdminAnnotationElement(
 export async function getAdminTrainingSummary(
   options?: ApiRequestOptions,
 ): Promise<AdminTrainingSummary> {
-  return getData<AdminTrainingSummary>('/admin/training/summary', options);
+  const data = await getData<AdminTrainingSummary>('/admin/training/summary', options);
+  if (!data?.training_snapshot || !Array.isArray(data?.data?.classes) ||
+      !data.data.classes.every((name) => typeof name === 'string') ||
+      !data.data.split_counts || !(['train', 'val', 'test', 'excluded'] as const)
+        .every((key) => Number.isFinite(data.data.split_counts[key])) ||
+      !Array.isArray(data.launch_disabled_reasons) ||
+      !data.parameters?.editable?.batch_size || !Array.isArray(data.parameters.editable.device) ||
+      !data.parameters.editable.device.every((device) => typeof device === 'string') ||
+      !(['default', 'min', 'max'] as const)
+        .every((key) => Number.isInteger(data.parameters.editable.batch_size[key]))) {
+    throw new Error('Invalid admin training summary response');
+  }
+  return data;
 }
 
 export async function getLatestAdminTrainingJob(
   options?: ApiRequestOptions,
 ): Promise<AdminTrainingJobResponse> {
   return getData<AdminTrainingJobResponse>('/admin/training/jobs/latest', options);
+}
+
+export async function getAdminTrainingJob(runId: string): Promise<AdminTrainingJobResponse> {
+  return getData<AdminTrainingJobResponse>(`/admin/training/jobs/${encodeURIComponent(runId)}`);
+}
+
+export async function getComparableModels(): Promise<{ versions: Array<{ version_id: string; status: string; created_at?: string }> }> {
+  return getData('/admin/training/models');
+}
+
+export async function startModelComparison(versionId: string, analysisId?: string): Promise<AdminTrainingJobResponse> {
+  return postData('/admin/training/comparisons', {
+    version_id: versionId,
+    ...(analysisId ? { analysis_id: analysisId } : {}),
+  });
 }
 
 export async function startAdminTrainingJob(

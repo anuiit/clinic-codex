@@ -85,6 +85,7 @@ build/
 # Ignore storage and generated backend folders but keep .gitkeep placeholders
 backend/annotations/
 !backend/annotations/.gitkeep
+backend/annotations-backup-*.tar.gz
 backend/training_data/
 !backend/training_data/.gitkeep
 backend/precomputed/
@@ -107,6 +108,8 @@ test-results/
 # Local datasets, experiments and generated comparison reports
 backend/training_corpus/
 backend/training_runs/
+backend/.retrain.lock
+backend/.retrain.guard
 reports/
 _legacy/frontend_integration/examples/sample_outputs/
 brave_*.png

@@ -19,7 +19,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from backend.codex_pipeline.data.class_order import class_order_sha256  # noqa: E402
-from scripts import benchmark_model_replacement as benchmark  # noqa: E402
+from scripts import benchmark_model_replacement_research as benchmark  # noqa: E402
 
 
 SCHEMA_VERSION = "business-model-evaluation.v1"

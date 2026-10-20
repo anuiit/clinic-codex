@@ -26,6 +26,7 @@ export type UseImageBBoxStageSizeResult = {
   stageWidth: number;
   stageHeight: number;
   transformSize: ImageBBoxStageTransformSize | null;
+  isMeasured: boolean;
   displayRect: ImageBBoxStageDisplayRect | null;
   updateStageSize: () => void;
 };
@@ -233,6 +234,7 @@ export function useImageBBoxStageSize({
     stageWidth: transformSize?.width ?? 0,
     stageHeight: transformSize?.height ?? 0,
     transformSize,
+    isMeasured: Boolean(image && measurement?.imageWidth === image.imageWidth && measurement?.imageHeight === image.imageHeight),
     displayRect: activeMeasurement?.displayRect ?? null,
     updateStageSize,
   };

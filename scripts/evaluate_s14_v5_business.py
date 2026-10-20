@@ -28,7 +28,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from scripts import benchmark_model_replacement as benchmark  # noqa: E402
+from scripts import benchmark_model_replacement_research as benchmark  # noqa: E402
 from scripts import evaluate_business_test_set as business_eval  # noqa: E402
 
 

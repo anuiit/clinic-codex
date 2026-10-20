@@ -28,27 +28,19 @@ export default function WorkspaceUploadModal({
 }: WorkspaceUploadModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--modal-scrim)] p-6 backdrop-blur-sm">
-      <div className="ui-panel w-full max-w-xl rounded-[28px] p-5 shadow-[var(--shadow-soft)]">
-        <div className="ui-divider flex items-start justify-between gap-4 border-b pb-4">
+      <div role="dialog" aria-modal="true" aria-labelledby="upload-preview-title" className="ui-panel w-full max-w-xl rounded-[28px] p-5 shadow-[var(--shadow-soft)]">
+        <div className="ui-divider border-b pb-4">
           <div>
             <p className="ui-text-eyebrow">
               {labels.uploadModalTitle}
             </p>
-            <h2 className="ui-title-md mt-1 truncate text-lg">
+            <h2 id="upload-preview-title" className="ui-title-md mt-1 truncate text-lg">
               {file.name}
             </h2>
             <p className="ui-text-body-sm mt-1">
               {labels.uploadModalDescription}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={loading}
-            className="ui-action-ghost rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-50"
-          >
-            {labels.cancel}
-          </button>
         </div>
 
         <div className="ui-crop-shell my-5 flex max-h-[46vh] items-center justify-center overflow-hidden rounded-2xl">

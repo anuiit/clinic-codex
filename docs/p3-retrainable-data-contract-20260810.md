@@ -151,7 +151,7 @@ recomputed from the same train rows. Package-fidelity replay measures about
 evidence, not a promotion result, and motivates reporting the two prototype
 modes separately.
 
-`scripts/benchmark_model_replacement.py` now requires an explicit
+`scripts/benchmark_model_replacement_research.py` now requires an explicit
 `--eval-split` (use `locked_test` for this report). It validates the complete
 snapshot/cache binding, prefers `row_id` joins with normalized path fallback,
 checks labels and persisted splits, rejects row and source-group train/eval
@@ -204,7 +204,7 @@ DEVICE=cuda MODEL_VERSION_ID=snapshot-research-local bash scripts/retrain.sh \
   --metadata-csv backend/training_corpus/snapshots/snapshot-471c74f801b749a9ad6e/metadata.csv \
   --backbone-manifest backend/training_corpus/backbone-pins/dinov2-vits14-local.json
 
-backend/.venv/bin/python scripts/benchmark_model_replacement.py \
+backend/.venv/bin/python scripts/benchmark_model_replacement_research.py \
   --features backend/model_registry/versions/<candidate-id>/training_data/precomputed/features.pt \
   --split-manifest backend/training_corpus/snapshots/snapshot-471c74f801b749a9ad6e/snapshot_manifest.json \
   --runtime-dir backend/model_registry/versions/<registered-original-id> \

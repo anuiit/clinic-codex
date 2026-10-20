@@ -4,16 +4,20 @@
 from __future__ import annotations
 
 import json
+import shutil
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image
 
 from backend.services.annotation_review import (
-    MANIFEST_FILENAME,
     AnnotationReviewNotFoundError,
+    AnnotationReviewConflictError,
     AnnotationReviewStore,
+    _legacy_source_fingerprint,
 )
-from backend.services.annotation_storage import save_annotation
+from backend.services.annotation_storage import AnnotationConflictError, save_annotation
 
 
 def _make_image():
@@ -78,7 +82,7 @@ def test_element_level_status_persists_and_can_be_mixed(tmp_path):
         2: "pending",
     }
     assert queue["counts"]["trainable"] == 1
-    manifest = json.loads((annotations_dir / MANIFEST_FILENAME).read_text())
+    manifest = store.export_review_manifest()
     assert sorted(manifest["decisions"]) == ["mixed-1:0", "mixed-1:1"]
     approved = queue["analyses"][0]["elements"][0]
     rejected = queue["analyses"][0]["elements"][1]
@@ -98,12 +102,15 @@ def test_existing_approved_decision_gets_stable_dataset_split_without_fingerprin
     original_split = result["element"]["dataset_split"]
     assert original_split in {"train", "val", "test"}
 
-    manifest_path = annotations_dir / MANIFEST_FILENAME
-    manifest = json.loads(manifest_path.read_text())
+    manifest = store.export_review_manifest()
     legacy_decision = manifest["decisions"]["legacy-split-1:0"]
     legacy_decision.pop("dataset_split")
     legacy_decision.pop("split_reason")
-    manifest_path.write_text(json.dumps(manifest))
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            "UPDATE review_decisions SET decision_json = ? WHERE key = ?",
+            (json.dumps(legacy_decision), "legacy-split-1:0"),
+        )
 
     queue = AnnotationReviewStore(annotations_dir).list_queue()
     [element] = queue["analyses"][0]["elements"]
@@ -123,16 +130,18 @@ def test_approved_only_iterator_excludes_rejected_pending_missing_crop_and_orpha
     store.set_status("eligibility-1", 3, "approved")
     (annotations_dir / "eligibility-1" / "elements" / "3.png").unlink()
 
-    manifest_path = annotations_dir / MANIFEST_FILENAME
-    manifest = json.loads(manifest_path.read_text())
-    manifest["decisions"]["orphan-1:0"] = {
+    orphan = {
         "analysis_id": "orphan-1",
         "index": 0,
         "status": "approved",
         "reviewed_at": "2026-05-26T00:00:00+00:00",
         "source_fingerprint": "missing",
     }
-    manifest_path.write_text(json.dumps(manifest))
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            "INSERT INTO review_decisions VALUES (?, ?, ?)",
+            ("orphan-1:0", 1, json.dumps(orphan)),
+        )
 
     queue = AnnotationReviewStore(annotations_dir).list_queue()
     approved = list(AnnotationReviewStore(annotations_dir).iter_approved_annotations())
@@ -149,25 +158,29 @@ def test_approved_only_iterator_excludes_rejected_pending_missing_crop_and_orpha
     assert queue["counts"]["trainable"] == 1
 
 
-def test_replaced_analysis_makes_previous_decision_stale_and_pending(tmp_path):
+def test_resubmitting_changed_analysis_is_rejected_without_losing_approval(tmp_path):
     annotations_dir = tmp_path / "annotations"
     _save(annotations_dir, "replace-1", count=1)
     store = AnnotationReviewStore(annotations_dir)
     store.set_status("replace-1", 0, "approved")
 
-    save_annotation(
-        "replace-1",
-        _make_image(),
-        [{"index": 0, "class_name": "new-class", "bbox": [2, 2, 4, 4]}],
-        base_dir=annotations_dir,
-        elements_dir=annotations_dir.parent / "training_data" / "Elements",
-    )
+    try:
+        save_annotation(
+            "replace-1",
+            _make_image(),
+            [{"index": 0, "class_name": "new-class", "bbox": [2, 2, 4, 4]}],
+            base_dir=annotations_dir,
+            elements_dir=annotations_dir.parent / "training_data" / "Elements",
+        )
+    except AnnotationConflictError:
+        pass
+    else:
+        raise AssertionError("changed submission was accepted")
 
     queue = AnnotationReviewStore(annotations_dir).list_queue()
 
-    assert _status_map(queue, "replace-1") == {0: "pending"}
-    assert list(AnnotationReviewStore(annotations_dir).iter_approved_annotations()) == []
-    assert any(item["code"] == "stale_decision" for item in queue["diagnostics"])
+    assert _status_map(queue, "replace-1") == {0: "approved"}
+    assert len(list(AnnotationReviewStore(annotations_dir).iter_approved_annotations())) == 1
 
 
 def test_metadata_crop_path_must_resolve_inside_analysis_folder(tmp_path):
@@ -184,7 +197,7 @@ def test_metadata_crop_path_must_resolve_inside_analysis_folder(tmp_path):
     [element] = queue["analyses"][0]["elements"]
 
     assert element["crop_exists"] is True
-    assert element["crop_path"].endswith("path-guard-1/elements/0.png")
+    assert Path(element["crop_path"]).parts[-3:] == ("path-guard-1", "elements", "0.png")
     assert str(outside) != element["crop_path"]
 
 
@@ -229,7 +242,7 @@ def test_invalid_or_missing_mutations_raise_clear_errors(tmp_path):
         raise AssertionError("invalid status did not raise")
 
 
-def test_modify_element_rewrites_metadata_crop_and_resets_to_pending(tmp_path):
+def test_modify_element_preserves_submission_and_resets_to_pending(tmp_path):
     annotations_dir = tmp_path / "annotations"
     _save(annotations_dir, "modify-1", count=1)
     image_path = annotations_dir / "modify-1" / "image.png"
@@ -241,6 +254,7 @@ def test_modify_element_rewrites_metadata_crop_and_resets_to_pending(tmp_path):
     patterned_source.save(image_path)
     store = AnnotationReviewStore(annotations_dir)
     approved = store.set_status("modify-1", 0, "approved")["element"]
+    metadata_before = (annotations_dir / "modify-1" / "metadata.json").read_bytes()
 
     result = store.modify_element(
         "modify-1",
@@ -260,10 +274,10 @@ def test_modify_element_rewrites_metadata_crop_and_resets_to_pending(tmp_path):
 
     metadata = json.loads((annotations_dir / "modify-1" / "metadata.json").read_text())
     [annotation] = metadata["annotations"]
-    assert annotation["class_name"] == "edited-class"
-    assert annotation["bbox"] == [2, 4, 5, 5]
-    assert annotation["crop_path"].endswith(".png")
-    with Image.open(image_path) as source, Image.open(annotation["crop_path"]) as crop:
+    assert (annotations_dir / "modify-1" / "metadata.json").read_bytes() == metadata_before
+    assert annotation["class_name"] == "class-0"
+    assert annotation["bbox"] == [0, 0, 4, 4]
+    with Image.open(image_path) as source, Image.open(element["crop_path"]) as crop:
         assert crop.size == (5, 5)
         expected = source.convert("RGB").crop((2, 4, 7, 9))
         assert crop.convert("RGB").tobytes() == expected.tobytes()
@@ -306,3 +320,105 @@ def test_modify_element_rejects_invalid_class_bbox_and_status(tmp_path):
             pass
         else:  # pragma: no cover
             raise AssertionError(f"invalid modify payload accepted: {kwargs}")
+
+
+def test_two_reviewers_cannot_commit_the_same_revision(tmp_path):
+    root = tmp_path / "annotations"
+    _save(root, "race-1", count=1)
+    def mutate(status):
+        return AnnotationReviewStore(root).set_status("race-1", 0, status, expected_revision=0)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(mutate, status) for status in ("approved", "rejected")]
+    outcomes = [future.exception() for future in futures]
+    assert sum(outcome is None for outcome in outcomes) == 1
+    assert sum(isinstance(outcome, AnnotationReviewConflictError) for outcome in outcomes) == 1
+    assert AnnotationReviewStore(root).list_queue()["analyses"][0]["elements"][0]["revision"] == 1
+
+
+def test_legacy_import_requires_explicit_apply_and_keeps_verified_backup(tmp_path):
+    root = tmp_path / "annotations"
+    _save(root, "legacy-1", count=1)
+    store = AnnotationReviewStore(root)
+    source = store.list_queue()["analyses"][0]["elements"][0]
+    manifest = {"schema_version": 1, "decisions": {"legacy-1:0": {
+        "analysis_id": "legacy-1", "index": 0, "status": "approved",
+        "source_fingerprint": source["source_fingerprint"], "class_name": "class-0",
+        "bbox": source["bbox"], "reviewed_at": "2026-01-01T00:00:00+00:00",
+    }}}
+    legacy_path = root / "review-index.json"
+    legacy_path.write_text(json.dumps(manifest), encoding="utf-8")
+    preview = store.preview_legacy_import()
+    assert preview["decisions"] == 1
+    assert not store.db_path.exists()
+    assert store.list_queue()["counts"]["trainable"] == 1
+    try:
+        store.set_status("legacy-1", 0, "pending", expected_revision=0)
+    except AnnotationReviewConflictError:
+        pass
+    else:
+        raise AssertionError("legacy store was mutated without import")
+    imported = store.import_legacy_manifest()
+    assert imported["status"] == "imported"
+    assert Path(imported["backup"]).read_bytes() == legacy_path.read_bytes()
+    assert store.import_legacy_manifest()["status"] == "already_imported"
+    assert store.list_queue()["analyses"][0]["elements"][0]["revision"] == 1
+    assert store.set_status("legacy-1", 0, "pending", expected_revision=1)["element"]["revision"] == 2
+
+
+def test_legacy_import_normalizes_decimal_bboxes_and_quarantines_unusable_ones(tmp_path):
+    root = tmp_path / "annotations"
+    _save(root, "legacy-boxes", count=3)
+    store = AnnotationReviewStore(root)
+    elements = store.list_queue()["analyses"][0]["elements"]
+    decisions = {element["key"]: {
+        "analysis_id": "legacy-boxes", "index": element["index"], "status": "approved",
+        "source_fingerprint": element["source_fingerprint"], "class_name": element["class_name"],
+        "bbox": element["bbox"], "reviewed_at": "2026-01-01T00:00:00+00:00",
+    } for element in elements}
+    decisions["legacy-boxes:1"]["bbox"] = [1.2, 1.7, 4.0, 4.2]
+    decisions["legacy-boxes:2"]["bbox"] = [2, 2, 0, 4]
+    legacy_path = root / "review-index.json"
+    legacy_path.write_text(json.dumps({"schema_version": 1, "decisions": decisions}), encoding="utf-8")
+
+    preview = store.preview_legacy_import()
+    assert preview["decisions"] == 3
+    assert preview["importable_decisions"] == 2
+    assert preview["normalized_bboxes"] == 1
+    assert preview["quarantined_invalid_bboxes"] == ["legacy-boxes:2"]
+    assert not store.db_path.exists()
+
+    result = store.import_legacy_manifest()
+    assert result["status"] == "imported"
+    assert Path(result["backup"]).read_bytes() == legacy_path.read_bytes()
+    assert _status_map(store.list_queue(), "legacy-boxes") == {0: "approved", 1: "approved", 2: "pending"}
+    assert store.list_queue()["counts"]["trainable"] == 2
+    imported = store.export_review_manifest()["decisions"]
+    assert imported["legacy-boxes:1"]["bbox"] == [1, 2, 4, 4]
+    assert "legacy-boxes:2" not in imported
+
+
+def test_legacy_import_survives_moving_annotations_between_computers(tmp_path):
+    source = tmp_path / "original" / "annotations"
+    _save(source, "moved-page", count=1)
+    metadata = json.loads((source / "moved-page" / "metadata.json").read_text())
+    crop = source / "moved-page" / "elements" / "0.png"
+    old_fingerprint = _legacy_source_fingerprint(
+        analysis_id="moved-page", uploaded_at=metadata["uploaded_at"],
+        annotation=metadata["annotations"][0], crop_path=crop,
+    )
+    (source / "review-index.json").write_text(json.dumps({"schema_version": 1, "decisions": {
+        "moved-page:0": {"analysis_id": "moved-page", "index": 0, "status": "approved",
+                         "source_fingerprint": old_fingerprint, "class_name": "class-0",
+                         "bbox": [0.2, 0, 4, 4], "reviewed_at": "2026-01-01T00:00:00+00:00"}
+    }}))
+    imported = tmp_path / "new-pc" / "annotations"
+    shutil.copytree(source, imported)
+    original_metadata = (imported / "moved-page" / "metadata.json").read_bytes()
+    store = AnnotationReviewStore(imported)
+    assert store.import_legacy_manifest()["importable_decisions"] == 1
+    assert store.list_queue()["counts"]["trainable"] == 1
+    assert (imported / "moved-page" / "metadata.json").read_bytes() == original_metadata
+
+    moved_again = tmp_path / "another-pc" / "annotations"
+    shutil.copytree(imported, moved_again)
+    assert AnnotationReviewStore(moved_again).list_queue()["counts"]["trainable"] == 1

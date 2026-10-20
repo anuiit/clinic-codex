@@ -75,7 +75,7 @@ export function WorkstationMark({ className = "" }: { className?: string }) {
 }
 
 export function PillButton({
-  active = false,
+  active,
   className = "",
   children,
   ...props
@@ -86,6 +86,7 @@ export function PillButton({
     <button
       type="button"
       data-active={active ? "true" : "false"}
+      aria-pressed={active}
       className={cx(
         controlBase,
         "h-7 px-2.5",
@@ -229,18 +230,19 @@ export function PageTabs<TId extends string>({
     items.findIndex((item) => item.id === activeId),
     0,
   );
-  const selectByOffset = (offset: number) => {
+  const selectByOffset = (offset: number, target: HTMLButtonElement) => {
     const nextIndex = (activeIndex + offset + items.length) % items.length;
     onSelect(items[nextIndex].id);
+    target.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "ArrowRight") {
       event.preventDefault();
-      selectByOffset(1);
+      selectByOffset(1, event.currentTarget);
     }
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      selectByOffset(-1);
+      selectByOffset(-1, event.currentTarget);
     }
   };
 

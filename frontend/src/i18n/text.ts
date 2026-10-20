@@ -1,8 +1,8 @@
 export const messages = {
   fr: {
     workspace: {
-      appTitle: 'Analyseur de glyphes Codex',
-      uploadPrompt: 'Déposez une image de glyphe ici ou cliquez pour parcourir',
+      appTitle: 'Analyse',
+      uploadPrompt: 'Importer une image',
       uploadModalTitle: 'Image prête à analyser',
       uploadModalDescription: 'Vérifiez l’image déposée avant de lancer la segmentation.',
       analyze: 'Analyser',
@@ -58,7 +58,7 @@ export const messages = {
       annotate: 'Annoter',
       noAnalysisSelected: 'Aucune analyse sélectionnée',
       noAnalysisDetails: 'Importez un nouveau glyphe ou sélectionnez une analyse enregistrée.',
-      apiError: 'Erreur API — le serveur Flask est-il lancé sur le port 5000 ?',
+      apiError: 'Erreur API — vérifiez que le backend est démarré et que les modèles sont installés.',
     },
     annotation: {
       notFound: 'Analyse introuvable',
@@ -92,7 +92,7 @@ export const messages = {
       submittedSummary: 'Prêts pour revue',
       submitNamed: 'Marquer les éléments nommés comme prêts',
       sendSubmittedForReview: 'Envoyer pour revue',
-      adminApprovalNotice: 'Les éléments prêts peuvent être envoyés pour revue. L’approbation admin finale n’est pas encore implémentée.',
+      adminApprovalNotice: 'Envoyez les éléments prêts, puis validez-les dans Admin → Trier avant de créer un candidat depuis l’onglet Entraîner.',
       zoomIn: 'Zoom avant',
       zoomOut: 'Zoom arrière',
       resetView: 'Réinitialiser la vue',

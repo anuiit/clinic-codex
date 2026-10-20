@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import closing
 import sys
 from pathlib import Path
 
@@ -10,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from backend.services.annotation_review import MANIFEST_FILENAME, AnnotationReviewStore
+from backend.services.annotation_review import AnnotationReviewStore
 from backend.services.annotation_storage import save_annotation
 from scripts.export_approved_annotations import export_approved_annotations
 
@@ -34,6 +36,16 @@ def _save(annotations_dir: Path):
     )
 
 
+def _patch_decisions(store: AnnotationReviewStore, splits: dict[str, str]) -> None:
+    """Edit persisted SQLite review decisions in place (simulates legacy/imported splits)."""
+    with closing(sqlite3.connect(store.db_path)) as connection, connection:
+        for key, split in splits.items():
+            (raw,) = connection.execute("SELECT decision_json FROM review_decisions WHERE key = ?", (key,)).fetchone()
+            decision = json.loads(raw)
+            decision["dataset_split"] = split
+            connection.execute("UPDATE review_decisions SET decision_json = ? WHERE key = ?", (json.dumps(decision), key))
+
+
 def test_export_approved_annotations_materializes_only_trainable_approved_elements(tmp_path):
     annotations_dir = tmp_path / "annotations"
     _save(annotations_dir)
@@ -43,16 +55,16 @@ def test_export_approved_annotations_materializes_only_trainable_approved_elemen
     store.set_status("approved-export-1", 3, "approved")
     (annotations_dir / "approved-export-1" / "elements" / "3.png").unlink()
 
-    manifest_path = annotations_dir / MANIFEST_FILENAME
-    manifest = json.loads(manifest_path.read_text())
-    manifest["decisions"]["orphan-1:0"] = {
+    orphan = {
         "analysis_id": "orphan-1",
         "index": 0,
         "status": "approved",
         "reviewed_at": "2026-05-26T00:00:00+00:00",
         "source_fingerprint": "missing",
     }
-    manifest_path.write_text(json.dumps(manifest))
+    with closing(sqlite3.connect(store.db_path)) as connection, connection:
+        connection.execute("INSERT INTO review_decisions VALUES (?, ?, ?)",
+                           ("orphan-1:0", 1, json.dumps(orphan)))
 
     output_dir = tmp_path / "approved" / "Elements"
     summary = export_approved_annotations(annotations_dir, output_dir)
@@ -122,10 +134,7 @@ def test_approved_explicitly_excluded_annotation_is_never_reassigned_or_exported
     _save(annotations_dir)
     store = AnnotationReviewStore(annotations_dir)
     store.set_status("approved-export-1", 0, "approved")
-    path = annotations_dir / MANIFEST_FILENAME
-    manifest = json.loads(path.read_text())
-    manifest["decisions"]["approved-export-1:0"]["dataset_split"] = "excluded"
-    path.write_text(json.dumps(manifest))
+    _patch_decisions(store, {"approved-export-1:0": "excluded"})
 
     element = store.list_queue()["analyses"][0]["elements"][0]
     assert element["dataset_split"] == "excluded"
@@ -167,11 +176,7 @@ def test_approved_metadata_keeps_labels_splits_and_source_pages(tmp_path):
     store = AnnotationReviewStore(annotations_dir)
     for index in [0, 1, 2]:
         store.set_status("approved-export-1", index, "approved")
-    path = annotations_dir / MANIFEST_FILENAME
-    manifest = json.loads(path.read_text())
-    for index, split in enumerate(["train", "val", "test"]):
-        manifest["decisions"][f"approved-export-1:{index}"]["dataset_split"] = split
-    path.write_text(json.dumps(manifest))
+    _patch_decisions(store, {f"approved-export-1:{index}": split for index, split in enumerate(["train", "val", "test"])})
     config = tmp_path / "runtime.json"
     config.write_text(json.dumps({"class_names": ["calli", "unused", "atl", "tochtli", "missing-crop"]}))
     output = tmp_path / "Elements"

@@ -36,6 +36,7 @@ from backend.codex_pipeline.data.class_order import (  # noqa: E402
     load_runtime_class_order,
 )
 from backend.services.annotation_review import AnnotationReviewStore  # noqa: E402
+from backend.codex_pipeline.data.snapshot import live_annotation_usage  # noqa: E402
 
 
 SCHEMA_VERSION = "training-snapshot.v2"
@@ -56,6 +57,22 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 def canonical_json_sha(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def live_annotations_sha256(rows: Iterable[dict[str, Any]]) -> str:
+    records = [
+        {
+            "source_id": row.get("source_id"),
+            "class_name": row.get("class_name"),
+            "bbox": row.get("bbox"),
+            "source_fingerprint_v1": row.get("source_fingerprint_v1"),
+            "source_sha256": row.get("source_sha256"),
+            "source_image_sha256": row.get("source_image_sha256"),
+        }
+        for row in rows
+        if row.get("source_kind") == "live_annotation"
+    ]
+    return canonical_json_sha(sorted(records, key=canonical_json_bytes))
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -263,14 +280,15 @@ def load_live_annotation_rows(
     for annotations_dir in sorted(
         [path.expanduser().resolve() for path in annotations_dirs], key=str
     ):
-        review_index = annotations_dir / "review-index.json"
+        store = AnnotationReviewStore(annotations_dir)
+        review_sha = store.review_manifest_sha256()
         manifests.append(
             {
-                "path": repo_path(review_index),
-                "sha256": sha256_file(review_index),
+                "path": repo_path(annotations_dir),
+                "sha256": review_sha,
             }
         )
-        for item in AnnotationReviewStore(annotations_dir).iter_approved_annotations():
+        for item in store.iter_approved_annotations():
             class_name = normalized_name(item.get("class_name"))
             if class_name not in class_labels:
                 raise ValueError(f"approved annotation class absent from runtime: {class_name}")
@@ -278,6 +296,7 @@ def load_live_annotation_rows(
             image_path = _verified_path(item.get("image_path"), context="approved source image")
             crop_byte_sha = sha256_file(crop_path)
             crop_pixel_sha = pixel_sha256(crop_path)
+            image_byte_sha = sha256_file(image_path)
             image_pixel_sha = pixel_sha256(image_path)
             analysis_id = str(item.get("analysis_id"))
             element_index = item.get("index")
@@ -298,12 +317,15 @@ def load_live_annotation_rows(
                         "index": element_index,
                         "bbox": item.get("bbox"),
                         "source_image_path": repo_path(image_path),
+                        "source_image_sha256": image_byte_sha,
                         "source_image_pixel_sha256": image_pixel_sha,
                         "source_fingerprint_v1": item.get("source_fingerprint"),
                         "review_dataset_split_v1": item.get("dataset_split"),
                     },
                 )
             )
+        if store.review_manifest_sha256() != review_sha:
+            raise ValueError("reviews changed during snapshot capture; retry")
     return manifests, rows
 
 
@@ -353,14 +375,7 @@ def _deduplicate_and_group(
                     "source_pixel_sha256": pixel_sha,
                     "class_names": sorted(classes),
                     "rows": [
-                        {
-                            "row_id": row["row_id"],
-                            "source_kind": row["source_kind"],
-                            "source_id": row["source_id"],
-                            "source_group": row["source_group"],
-                            "class_label": row["class_label"],
-                            "class_name": row["class_name"],
-                        }
+                        dict(row)
                         for row in sorted(cluster, key=lambda item: item["row_id"])
                     ],
                     "resolution": "excluded_pending_manual_review",
@@ -431,6 +446,7 @@ def assign_splits(
     dev_fraction: float,
     test_fraction: float,
     min_train_rows_per_class: int,
+    training_source_groups: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, str], list[dict[str, Any]]]:
     if (
         not isinstance(min_train_rows_per_class, int)
@@ -453,20 +469,24 @@ def assign_splits(
         raise ValueError("dev_fraction + locked_test_fraction must be < 1")
 
     component_groups: dict[str, set[str]] = defaultdict(set)
-    active_groups = {row["source_group"] for row in rows}
-    for group in sorted(active_groups):
-        component_groups[dsu.find(group)].add(group)
+    active_roots = {dsu.find(row["source_group"]) for row in rows}
+    for group in sorted(dsu.parent):
+        if dsu.find(group) in active_roots:
+            component_groups[dsu.find(group)].add(group)
     component_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         component_rows[dsu.find(row["source_group"])].append(row)
 
     component_split: dict[str, str] = {}
     inherited_components: set[str] = set()
+    training_roots = {dsu.find(group) for group in training_source_groups or set()}
     for root, groups in sorted(component_groups.items()):
         inherited = {parent_assignments[group] for group in groups if group in parent_assignments}
-        if len(inherited) > 1:
+        if len(inherited) > 1 and root not in training_roots:
             raise ValueError(f"new duplicate connection spans parent splits: {sorted(groups)}")
-        if inherited:
+        if root in training_roots:
+            component_split[root] = "train"
+        elif inherited:
             component_split[root] = inherited.pop()
             inherited_components.add(root)
         else:
@@ -559,7 +579,7 @@ def assign_splits(
         }
         eligible: list[str] = []
         for root, split in component_split.items():
-            if split != "train" or root in inherited_components:
+            if split != "train" or root in inherited_components or root in training_roots:
                 continue
             component_counts = Counter(row["class_name"] for row in component_rows[root])
             if all(
@@ -670,8 +690,14 @@ def assign_splits(
                 "source_groups": sorted(groups),
                 "dataset_split": split,
                 "assignment_origin": (
-                    "parent" if root in inherited_components else "new"
+                    "approved_annotation_training" if root in training_roots
+                    else "parent" if root in inherited_components else "new"
                 ),
+                "retired_holdout_assignments": {
+                    group: parent_assignments[group]
+                    for group in sorted(groups)
+                    if root in training_roots and parent_assignments.get(group) in {"dev", "locked_test"}
+                },
                 "row_ids": sorted(row["row_id"] for row in component),
                 "class_names": sorted({row["class_name"] for row in component}),
             }
@@ -701,6 +727,7 @@ def _semantic_manifest(
     locked_test_fraction: float,
     min_train_rows_per_class: int,
     allow_underfilled_holdouts: bool,
+    train_live_annotations: bool,
 ) -> dict[str, Any]:
     sorted_active = sorted(
         active_rows,
@@ -833,6 +860,7 @@ def _semantic_manifest(
     holdout_eligible_count = sum(
         item["eligible"] for item in holdout_eligibility_classes
     )
+    live_usage = live_annotation_usage({"rows": sorted_active, "duplicates": sorted_duplicates, "conflicts": conflicts})
     return {
         "schema_version": SCHEMA_VERSION,
         "parent_snapshot_id": parent_snapshot_id,
@@ -841,7 +869,7 @@ def _semantic_manifest(
         "class_order": class_order,
         "class_order_sha256": class_order_sha256(class_order),
         "policy": {
-            "version": POLICY_VERSION,
+            "version": "approved-live-train.v1" if train_live_annotations else POLICY_VERSION,
             "deduplication": "exact_rgb_pixel_sha256",
             "grouping": "source_group_plus_duplicate_union",
             "split_salt": split_salt,
@@ -850,10 +878,34 @@ def _semantic_manifest(
             "minimum_train_rows_per_class": min_train_rows_per_class,
             "underfilled_holdouts_require_explicit_override": True,
             "allow_underfilled_holdouts": allow_underfilled_holdouts,
-            "parent_assignments_are_immutable": True,
+            "parent_assignments_are_immutable": not train_live_annotations,
+            "train_live_annotations": train_live_annotations,
+            "parent_artifact_is_immutable": True,
             "content_sha256_excludes_materialized_output_fields": True,
         },
         "source_manifests": sorted(source_manifests, key=lambda item: item["path"]),
+        "live_annotation_usage": live_usage,
+        "live_train_count": live_usage["split_counts"]["train"],
+        "live_annotation_count": sum(
+            row.get("source_kind") == "live_annotation"
+            for row in [*sorted_active, *sorted_duplicates]
+        )
+        + sum(
+            row.get("source_kind") == "live_annotation"
+            for conflict in conflicts
+            for row in conflict["rows"]
+        ),
+        "live_annotations_sha256": live_annotations_sha256(
+            [
+                *sorted_active,
+                *sorted_duplicates,
+                *[
+                    row
+                    for conflict in conflicts
+                    for row in conflict["rows"]
+                ],
+            ]
+        ),
         "active_row_ids": [row["row_id"] for row in sorted_active],
         "row_count": len(sorted_active),
         "duplicate_count": len(sorted_duplicates),
@@ -872,7 +924,7 @@ def _semantic_manifest(
                 "corpus leaves the declared train-row floor for every member class."
             ),
             "operational_definition": (
-                "Parent-origin components are immutable. Only new train components "
+                "Parent-origin components are immutable unless explicitly retired for live-annotation training. Only new train components "
                 "listed as movable may be reassigned without collecting more data."
             ),
             "eligible_class_count": holdout_eligible_count,
@@ -911,6 +963,7 @@ def plan_training_snapshot(
     min_train_rows_per_class: int = 2,
     allow_underfilled_holdouts: bool = False,
     exclude_conflicts: bool = False,
+    train_live_annotations: bool = False,
 ) -> dict[str, Any]:
     runtime_config = runtime_config.expanduser().resolve()
     class_order = [normalized_name(name) for name in load_runtime_class_order(runtime_config)]
@@ -933,6 +986,10 @@ def plan_training_snapshot(
         dev_fraction=dev_fraction,
         test_fraction=locked_test_fraction,
         min_train_rows_per_class=min_train_rows_per_class,
+        training_source_groups=(
+            {row["source_group"] for row in selected + duplicates if row["source_kind"] == "live_annotation"}
+            if train_live_annotations else set()
+        ),
     )
     current_ids = {row["row_id"] for row in selected}
     missing_parent = sorted(parent_row_ids - current_ids)
@@ -953,7 +1010,7 @@ def plan_training_snapshot(
             "sha256": sha256_file(external_snapshot),
         },
         *[
-            {"kind": "annotation-review-index.v1", **manifest}
+            {"kind": "annotation-review-state.v1", **manifest}
             for manifest in annotation_manifests
         ],
     ]
@@ -972,6 +1029,7 @@ def plan_training_snapshot(
         locked_test_fraction=locked_test_fraction,
         min_train_rows_per_class=min_train_rows_per_class,
         allow_underfilled_holdouts=allow_underfilled_holdouts,
+        train_live_annotations=train_live_annotations,
     )
     if not semantic["split_targets_satisfied"] and not allow_underfilled_holdouts:
         deficits = semantic["split_target_deficits"]
@@ -1124,6 +1182,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--parent-manifest", type=Path)
     parser.add_argument(
+        "--train-live-annotations", action="store_true",
+        help="Assign approved annotations and their entire duplicate/source component to train in a new snapshot; retire any former holdout membership",
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=REPO_ROOT / "backend" / "training_corpus" / "snapshots",
@@ -1166,6 +1228,7 @@ def main(argv: list[str] | None = None) -> int:
             min_train_rows_per_class=args.min_train_rows_per_class,
             allow_underfilled_holdouts=args.allow_underfilled_holdouts,
             exclude_conflicts=args.exclude_conflicts,
+            train_live_annotations=args.train_live_annotations,
         )
         destination = None
         if not args.dry_run:
@@ -1181,6 +1244,10 @@ def main(argv: list[str] | None = None) -> int:
         "duplicate_count": manifest["duplicate_count"],
         "conflict_count": manifest["conflict_count"],
         "class_count": manifest["class_count"],
+        "live_annotation_count": manifest["live_annotation_count"],
+        "live_train_count": manifest["live_train_count"],
+        "live_annotation_usage": manifest["live_annotation_usage"],
+        "live_annotations_sha256": manifest["live_annotations_sha256"],
         "source_group_count": manifest["source_group_count"],
         "split_counts": manifest["split_counts"],
         "split_policy_version": manifest["policy"]["version"],

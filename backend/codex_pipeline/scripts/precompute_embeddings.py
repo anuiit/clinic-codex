@@ -43,7 +43,6 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(1, str(Path(__file__).resolve().parents[3]))
 
-from codex_model.classifier import IMAGE_PREPROCESSING, _preprocess_image
 from codex_pipeline.data.class_order import (
     class_order_sha256,
     load_runtime_class_order,
@@ -52,6 +51,7 @@ from codex_pipeline.data.class_order import (
 )
 from codex_pipeline.data.metadata import filter_classes, load_metadata
 from scripts.pin_dinov2 import sha256_tree
+from codex_model.classifier import PREPROCESSING_VERSION, _preprocess_image
 
 
 def sha256_file(path: str | Path) -> str:
@@ -204,76 +204,8 @@ def validate_snapshot_contract(
     }
 
 
-def load_backbone(backbone_name: str, device: torch.device, backbone_manifest: str | Path | None = None):
-    if backbone_manifest is None:
-        print("Loading DINOv2-S/14 backbone from torch.hub...")
-        backbone = torch.hub.load(
-            "facebookresearch/dinov2",
-            backbone_name,
-            pretrained=True,
-        )
-        return backbone.to(device).eval(), {
-            "mode": "torch_hub_pretrained",
-            "backbone": backbone_name,
-        }
-
-    manifest_path = Path(backbone_manifest)
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
-        raise ValueError(f"backbone manifest must be a JSON object: {manifest_path}")
-    if manifest.get("schema_version") != "dinov2-local-pin.v1":
-        raise ValueError(f"backbone manifest has an unsupported schema: {manifest_path}")
-    if manifest.get("backbone") != backbone_name:
-        raise ValueError(
-            f"backbone manifest targets {manifest.get('backbone')!r}, expected {backbone_name!r}"
-        )
-
-    repository_raw = manifest.get("repository_path")
-    weights_raw = manifest.get("weights_path")
-    if not isinstance(repository_raw, str) or not repository_raw:
-        raise ValueError("backbone manifest repository_path must be a non-empty string")
-    if not isinstance(weights_raw, str) or not weights_raw:
-        raise ValueError("backbone manifest weights_path must be a non-empty string")
-    repository_path = Path(repository_raw)
-    weights_path = Path(weights_raw)
-    if not repository_path.is_dir():
-        raise FileNotFoundError(f"backbone repository path missing: {repository_path}")
-    if not (repository_path / "hubconf.py").is_file():
-        raise FileNotFoundError(f"backbone repository is not a torch.hub checkout: {repository_path}")
-    if not weights_path.is_file():
-        raise FileNotFoundError(f"backbone weights file missing: {weights_path}")
-
-    expected_weights_sha = manifest.get("weights_sha256")
-    actual_weights_sha = sha256_file(weights_path)
-    if expected_weights_sha != actual_weights_sha:
-        raise ValueError(
-            "backbone weights checksum mismatch: "
-            f"expected {expected_weights_sha}, got {actual_weights_sha}"
-        )
-    expected_source_sha = manifest.get("source_tree_sha256")
-    actual_source_sha = sha256_tree(repository_path)
-    if expected_source_sha != actual_source_sha:
-        raise ValueError(
-            "backbone source tree checksum mismatch: "
-            f"expected {expected_source_sha}, got {actual_source_sha}"
-        )
-
-    print("Loading DINOv2-S/14 backbone from local pin...")
-    backbone = torch.hub.load(str(repository_path), backbone_name, source="local", pretrained=False)
-    state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
-    backbone.load_state_dict(state_dict, strict=True)
-    backbone = backbone.to(device).eval()
-    return backbone, {
-        "mode": "local_pin",
-        "backbone": backbone_name,
-        "manifest_path": str(manifest_path.resolve()),
-        "manifest_sha256": sha256_file(manifest_path),
-        "repository_path": str(repository_path),
-        "repository_sha256": actual_source_sha,
-        "weights_path": str(weights_path),
-        "weights_sha256": actual_weights_sha,
-    }
-
+# Shared with runtime inference: identical pin validation and local loading.
+from scripts.pin_dinov2 import load_backbone
 
 class SimpleImageDataset(Dataset):
     """Minimal dataset: load image, resize, normalize. No augmentation."""
@@ -288,8 +220,7 @@ class SimpleImageDataset(Dataset):
     def __getitem__(self, idx):
         row = self.metadata.iloc[idx]
         with Image.open(row["image_path"]) as image:
-            tensor = _preprocess_image(image, self.image_size).squeeze(0)
-        return tensor, row["class_label"]
+            return _preprocess_image(image, self.image_size).squeeze(0), row["class_label"]
 
 
 def get_device(device_str):
@@ -455,11 +386,12 @@ def main():
         "backbone": cfg["model"]["backbone"],
         "hidden_dim": hidden_dim,
         "image_size": cfg["data"]["image_size"],
-        "preprocessing": IMAGE_PREPROCESSING,
+        "preprocessing": PREPROCESSING_VERSION,
     }, out_path)
 
     provenance = {
         "schema_version": "features-cache.v1",
+        "preprocessing": PREPROCESSING_VERSION,
         "config_path": str(Path(args.config).resolve()),
         "config_sha256": sha256_file(args.config),
         "metadata_csv_path": str(Path(metadata_csv).resolve()),
@@ -475,7 +407,7 @@ def main():
         "image_count": len(metadata),
         "hidden_dim": hidden_dim,
         "image_size": cfg["data"]["image_size"],
-        "preprocessing": IMAGE_PREPROCESSING,
+        "preprocessing": PREPROCESSING_VERSION,
         "torch_version": str(torch.__version__),
     }
     prov_path = Path(str(out_path) + ".prov.json")

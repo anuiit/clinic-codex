@@ -5,6 +5,7 @@ import {
 } from './storageDb';
 import {
   hasLegacyPayload,
+  LEGACY_MIGRATION_MARKER_KEY,
   markLegacyMigrationComplete,
   readLegacyAnalysisRecords,
 } from './storageLegacy';
@@ -18,16 +19,31 @@ export type StorageInitResult = {
   error?: Error;
 };
 
-type StorageDbFactory = () => AnalysisStorageDb;
+type StorageDbFactory = (name: string) => AnalysisStorageDb;
 
 type StorageTestOptions = {
   dbFactory?: StorageDbFactory;
 };
 
-let dbFactory: StorageDbFactory = () => createIndexedDbStorageDb();
+let dbFactory: StorageDbFactory = (name) => createIndexedDbStorageDb({ dbName: name });
 let db: AnalysisStorageDb | null = null;
 let initPromise: Promise<StorageInitResult> | null = null;
 let lastInitResult: StorageInitResult | null = null;
+let activeAccountId: string | null = 'local';
+let accountGeneration = 0;
+let legacyImportAllowed = true;
+const LEGACY_OWNER_KEY = 'clinic-codex-legacy-owner';
+
+export function setStorageAccount(accountId: string | null, allowLegacyImport = false): void {
+  legacyImportAllowed = Boolean(accountId) && (accountId === 'local' || allowLegacyImport);
+  if (accountId === activeAccountId) return;
+  db?.close();
+  db = null;
+  initPromise = null;
+  lastInitResult = null;
+  activeAccountId = accountId;
+  accountGeneration += 1;
+}
 
 function normalizeAnnotationStatus(status: unknown, elementCount: number): Record<number, AnnotationStatus> {
   if (!status || typeof status !== 'object') {
@@ -64,8 +80,9 @@ function toError(issue: unknown) {
 }
 
 function getDb() {
+  if (!activeAccountId) throw new Error('Connectez-vous pour accéder à l’historique local');
   if (!db) {
-    db = dbFactory();
+    db = dbFactory(`clinic-codex-storage-account-${encodeURIComponent(activeAccountId)}`);
   }
   return db;
 }
@@ -77,46 +94,52 @@ function legacyHistory() {
 export async function initializeStorage(): Promise<StorageInitResult> {
   if (initPromise) return initPromise;
 
-  initPromise = (async () => {
-    const legacyFound = hasLegacyPayload();
-    const legacyRecords = legacyHistory();
+  const pending = initPromise = (async () => {
+    const legacyFound = legacyImportAllowed && hasLegacyPayload();
+    const generation = accountGeneration;
 
     try {
       const storageDb = getDb();
-      const importedCount = await storageDb.importMissingRecords(legacyRecords);
-      markLegacyMigrationComplete(importedCount);
+      await storageDb.listRecords();
+      if (generation !== accountGeneration) throw new Error('Le compte actif a changé');
       const result: StorageInitResult = {
         ok: true,
-        migrated: true,
+        migrated: false,
         legacyFound,
-        legacyRecordCount: legacyRecords.length,
-        importedCount,
+        legacyRecordCount: 0,
+        importedCount: 0,
       };
       lastInitResult = result;
       return result;
     } catch (issue) {
-      db?.close();
-      db = null;
-      initPromise = null;
+      if (generation === accountGeneration) {
+        db?.close();
+        db = null;
+        initPromise = null;
+      }
       const result: StorageInitResult = {
         ok: false,
         migrated: false,
         legacyFound,
-        legacyRecordCount: legacyRecords.length,
+        legacyRecordCount: 0,
         importedCount: 0,
         error: toError(issue),
       };
-      lastInitResult = result;
+      if (generation === accountGeneration) lastInitResult = result;
       return result;
     }
   })();
 
-  return initPromise;
+  return pending.then((result) => {
+    if (!result.ok && initPromise === pending) initPromise = null;
+    return result;
+  });
 }
 
 async function getWritableDb() {
+  const generation = accountGeneration;
   const result = await initializeStorage();
-  if (!result.ok) {
+  if (!result.ok || generation !== accountGeneration) {
     throw result.error ?? new Error('Browser storage is unavailable');
   }
   return getDb();
@@ -127,40 +150,95 @@ export function getLastStorageInitResult() {
 }
 
 export async function getHistory(): Promise<AnalysisRecord[]> {
+  const generation = accountGeneration;
   const result = await initializeStorage();
-  if (!result.ok) {
-    return legacyHistory();
-  }
+  if (generation !== accountGeneration) return [];
+  if (!result.ok) throw result.error ?? new Error('Browser storage is unavailable');
 
   try {
     const records = await getDb().listRecords();
+    if (generation !== accountGeneration) return [];
     return records.map((stored) => normalizeAnalysisRecord(stored.record));
   } catch (issue) {
-    lastInitResult = {
-      ...result,
-      ok: false,
-      error: toError(issue),
-    };
-    return legacyHistory();
+    if (generation !== accountGeneration) return [];
+    lastInitResult = { ...result, ok: false, error: toError(issue) };
+    db?.close();
+    db = null;
+    initPromise = null;
+    throw lastInitResult.error;
   }
 }
 
 export async function getAnalysisById(id: string): Promise<AnalysisRecord | null> {
+  const generation = accountGeneration;
   const result = await initializeStorage();
-  if (!result.ok) {
-    return legacyHistory().find((record) => record.id === id) ?? null;
-  }
+  if (generation !== accountGeneration) return null;
+  if (!result.ok) throw result.error ?? new Error('Browser storage is unavailable');
 
   try {
     const stored = await getDb().getRecord(id);
+    if (generation !== accountGeneration) return null;
     return stored ? normalizeAnalysisRecord(stored.record) : null;
   } catch (issue) {
-    lastInitResult = {
-      ...result,
-      ok: false,
-      error: toError(issue),
-    };
-    return legacyHistory().find((record) => record.id === id) ?? null;
+    if (generation !== accountGeneration) return null;
+    lastInitResult = { ...result, ok: false, error: toError(issue) };
+    db?.close();
+    db = null;
+    initPromise = null;
+    throw lastInitResult.error;
+  }
+}
+
+async function legacyRecords(): Promise<AnalysisRecord[]> {
+  let stored: Awaited<ReturnType<AnalysisStorageDb['listRecords']>> = [];
+  let previousDb: AnalysisStorageDb | null = null;
+  if (globalThis.indexedDB) {
+    try {
+      previousDb = createIndexedDbStorageDb();
+      stored = await previousDb.listRecords();
+    } finally {
+      previousDb?.close();
+    }
+  }
+  const found = new Map<string, AnalysisRecord>();
+  for (const item of stored) found.set(item.id, normalizeAnalysisRecord(item.record));
+  for (const record of legacyHistory()) {
+    if (!found.has(record.id)) found.set(record.id, record);
+  }
+  return [...found.values()];
+}
+
+export async function getLegacyImportCount(): Promise<number> {
+  if (!legacyImportAllowed) return 0;
+  const owner = localStorage.getItem(LEGACY_OWNER_KEY);
+  if (owner && owner !== activeAccountId) return 0;
+  if (owner && localStorage.getItem(LEGACY_MIGRATION_MARKER_KEY)) return 0;
+  const generation = accountGeneration;
+  const count = (await legacyRecords()).length;
+  return generation === accountGeneration ? count : 0;
+}
+
+export async function importLegacyHistory(): Promise<number> {
+  if (!legacyImportAllowed || !activeAccountId) throw new Error('Import réservé à l’administration locale');
+  const owner = localStorage.getItem(LEGACY_OWNER_KEY);
+  if (owner && owner !== activeAccountId) throw new Error('Cet historique a déjà été attribué à un autre compte');
+  // Reserve unowned data during import, but release the reservation if import fails.
+  const claimant = activeAccountId;
+  const claimed = !owner;
+  if (claimed) localStorage.setItem(LEGACY_OWNER_KEY, claimant);
+  const generation = accountGeneration;
+  try {
+    const previous = await legacyRecords();
+    const storageDb = await getWritableDb();
+    if (generation !== accountGeneration) throw new Error('Le compte actif a changé');
+    const count = await storageDb.importMissingRecords(previous);
+    markLegacyMigrationComplete(count);
+    return count;
+  } catch (issue) {
+    if (claimed && localStorage.getItem(LEGACY_OWNER_KEY) === claimant && !localStorage.getItem(LEGACY_MIGRATION_MARKER_KEY)) {
+      localStorage.removeItem(LEGACY_OWNER_KEY);
+    }
+    throw issue;
   }
 }
 
@@ -207,5 +285,8 @@ export function __resetStorageForTests(options: StorageTestOptions = {}): void {
   db = null;
   initPromise = null;
   lastInitResult = null;
-  dbFactory = options.dbFactory ?? (() => createIndexedDbStorageDb());
+  activeAccountId = 'local';
+  legacyImportAllowed = true;
+  accountGeneration += 1;
+  dbFactory = options.dbFactory ?? ((name) => createIndexedDbStorageDb({ dbName: name }));
 }

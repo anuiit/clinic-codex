@@ -11,12 +11,14 @@ from flask import jsonify
 try:  # Support both repo-root (`backend.*`) and backend-root (`services.*`) imports.
     from backend.services.annotation_storage import (
         AnnotationDiskFullError,
+        AnnotationConflictError,
         AnnotationPermissionError,
         AnnotationStorageError,
     )
 except ImportError:  # pragma: no cover - compatibility path
     from services.annotation_storage import (  # type: ignore
         AnnotationDiskFullError,
+        AnnotationConflictError,
         AnnotationPermissionError,
         AnnotationStorageError,
     )
@@ -62,6 +64,9 @@ class ModelAssetUnavailable(Exception):
 
 
 def annotation_error_response(exc: Exception):
+    if isinstance(exc, AnnotationConflictError):
+        message = str(exc)
+        return jsonify({"status": "error", "error_code": "ANNOTATION_CONFLICT", "message": message, "error": message}), 409
     if isinstance(exc, ValueError):
         message = str(exc)
         return jsonify({"status": "error", "error_code": "VALIDATION_ERROR", "message": message, "error": message}), 400

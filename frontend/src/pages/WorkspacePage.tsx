@@ -10,7 +10,9 @@ import WorkspaceEmptyState from "./workspace/WorkspaceEmptyState";
 import WorkspaceHeader from "./workspace/WorkspaceHeader";
 import WorkspaceOverlayToolbar from "./workspace/WorkspaceOverlayToolbar";
 import WorkspaceUploadModal from "./workspace/WorkspaceUploadModal";
+import { AnnotationToast } from "./annotation/AnnotationToast";
 import workspaceStyles from "./workspace/WorkspaceChrome.module.css";
+import { adminAnnotationMediaUrl } from "../services/api";
 import { useWorkspaceHistory } from "./workspace/useWorkspaceHistory";
 import { useWorkspaceUpload } from "./workspace/useWorkspaceUpload";
 import { useWorkspaceViewport } from "./workspace/useWorkspaceViewport";
@@ -24,6 +26,12 @@ type WorkspacePageProps = {
   onToggleTheme?: () => void;
   authSlot?: ReactNode;
 };
+
+const exampleImages = [
+  { name: "387_769v.jpg", label: "Page entière", url: new URL("../test/fixtures/387_769v.jpg", import.meta.url).href },
+  { name: "033_02_01-7.jpg", label: "Glyphe atl", url: adminAnnotationMediaUrl("/samples/atl/033_02_01-7.jpg") },
+  { name: "032_05_009-6.jpg", label: "Glyphe calli", url: adminAnnotationMediaUrl("/samples/calli/032_05_009-6.jpg") },
+];
 
 export default function WorkspacePage({
   themeMode = "dark",
@@ -90,29 +98,19 @@ export default function WorkspacePage({
         className="ui-text-meta flex min-w-0 flex-wrap items-center gap-1.5"
         data-testid="workspace-image-header-meta"
       >
-        <span className="truncate" title={history.currentRecord.imageName}>
-          {history.currentRecord.imageName}
-        </span>
-        <span aria-hidden="true" className="text-[var(--divider)]">
-          ·
-        </span>
         <span>{history.stats.imageSizeLabel}</span>
         <span aria-hidden="true" className="text-[var(--divider)]">
           ·
         </span>
         <span>
-          Annotés / rejetés {history.stats.annotatedCount}/{history.stats.total} ·{" "}
-          {history.stats.rejectedCount}
+          {history.stats.annotatedCount}/{history.stats.total} annotés · {history.stats.rejectedCount} rejetés
         </span>
-        <span aria-hidden="true" className="text-[var(--divider)]">
-          ·
-        </span>
-        <span
-          className="min-w-0 truncate"
-          title={history.stats.topClasses.join(", ")}
-        >
-          Classes {history.stats.topClasses.join(", ") || history.stats.topClass}
-        </span>
+        {history.stats.topClasses.length ? <>
+          <span aria-hidden="true" className="text-[var(--divider)]">·</span>
+          <span className="min-w-0 truncate" title={history.stats.topClasses.join(", ")}>
+            Classes {history.stats.topClasses.join(", ")}
+          </span>
+        </> : null}
       </div>
     ) : null;
 
@@ -140,24 +138,58 @@ export default function WorkspacePage({
     >
       <WorkspaceHeader
         inputRef={upload.inputRef}
-        dragging={upload.dragging}
-        preview={upload.preview}
-        file={upload.file}
         loading={upload.loading}
         error={upload.error}
         labels={{
           appTitle: t.appTitle,
-          previewAlt: t.previewAlt,
           uploadPrompt: t.uploadPrompt,
-          analyze: t.analyze,
-          analyzing: t.analyzing,
         }}
         onFileSelected={upload.handleFile}
-        onAnalyze={upload.analyze}
         themeMode={themeMode}
         onToggleTheme={onToggleTheme}
         authSlot={authSlot}
       />
+
+      {!history.currentRecord ? <details className="shrink-0 border-b border-[color:var(--border-subtle)] px-4 py-2">
+        <summary className="cursor-pointer text-sm text-[color:var(--text-muted)]">Essayer avec 3 images du corpus</summary>
+        <div className="flex flex-wrap gap-2 pt-2">
+          {exampleImages.map((example) => (
+            <button
+              key={example.name}
+              type="button"
+              disabled={upload.loading}
+              onClick={() => void upload.analyzeExample(example.url, example.name)}
+              className="ui-action-ghost inline-flex items-center gap-2 px-2 py-1 text-sm disabled:opacity-50"
+              aria-label={`Analyser l'exemple ${example.name}`}
+            >
+              <img src={example.url} alt="" loading="lazy" className="h-9 w-9 rounded object-cover" />
+              <span>{example.label}</span>
+            </button>
+          ))}
+          {upload.loading ? <span role="status" className="ui-text-caption self-center">Analyse en cours…</span> : null}
+        </div>
+        <p className="ui-text-caption mt-1">Les prédictions sont réelles et peuvent différer du nom des images : vérifiez-les avant d’annoter.</p>
+      </details> : null}
+
+      {history.legacyImportCount > 0 ? (
+        <div className="ui-alert ui-alert--accent flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
+          <span>{history.legacyImportCount} ancienne(s) analyse(s) sans propriétaire. Récupération administrateur : les attribuer définitivement à ce compte sur ce navigateur ?</span>
+          <button type="button" className="ui-action-ghost px-2 py-1" onClick={() => void history.importLegacy()}>
+            Importer dans mon compte
+          </button>
+        </div>
+      ) : null}
+      {history.legacyImportError ? <div role="alert" className="ui-alert ui-alert--danger flex items-center gap-3 px-4 py-2">
+        <span>{history.legacyImportError}</span>
+        <button type="button" className="ui-action-ghost px-2 py-1" onClick={() => void history.refreshLegacyImportCount()}>Réessayer l'import</button>
+      </div> : null}
+      {history.storageError ? (
+        <div role="alert" className="ui-alert ui-alert--danger flex items-center gap-3 px-4 py-2">
+          <span>{history.storageError}</span>
+          <button type="button" className="ui-action-ghost px-2 py-1" onClick={() => void history.syncRecords().catch(() => undefined)}>Réessayer l'historique</button>
+        </div>
+      ) : null}
+      {history.historyError ? <AnnotationToast toast={{ msg: history.historyError, ok: false }} /> : null}
 
       {upload.preview && upload.file && (
         <WorkspaceUploadModal

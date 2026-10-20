@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import base64
 import errno
+import hashlib
 import io
 import json
 import os
 import re
 import shutil
 import uuid
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -31,6 +33,21 @@ class AnnotationPermissionError(AnnotationStorageError, PermissionError):
 
 class AnnotationDiskFullError(AnnotationStorageError, OSError):
     """Raised when the disk has no space left."""
+
+
+class AnnotationConflictError(AnnotationStorageError):
+    """An analysis ID already belongs to a different submission."""
+
+
+def sanitize_image_name(name: str | None) -> str | None:
+    if name is None:
+        return None
+    if not isinstance(name, str):
+        raise ValueError("image_name must be a string")
+    clean = unicodedata.normalize("NFC", name.replace("\\", "/").rsplit("/", 1)[-1].strip())
+    if not clean or any(ord(char) < 32 for char in clean) or len(clean) > 255:
+        raise ValueError("image_name must be a filename of at most 255 characters")
+    return clean
 
 
 def sanitize_class_name(name: str) -> str:
@@ -139,12 +156,15 @@ def save_annotation(
     base_dir: Path,
     elements_dir: Path,  # kept for backward compat — not used
     author_id: str | None = None,
+    image_name: str | None = None,
 ) -> dict:
     if not _SAFE_ID.match(analysis_id):
         raise ValueError(
             f"analysis_id '{analysis_id}' must be alphanumeric/dash/underscore only"
         )
 
+    image_name = sanitize_image_name(image_name)
+    base_dir = Path(base_dir).resolve()
     target_dir = base_dir / analysis_id
     tmp_dir = base_dir / f".tmp-{analysis_id}-{os.getpid()}-{uuid.uuid4().hex}"
 
@@ -185,13 +205,24 @@ def save_annotation(
             "analysis_id": analysis_id,
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
             "submitted_by": author_id,
+            "image_name": image_name,
             "annotations": saved_annotations,
         }
         (tmp_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
 
+        if target_dir.is_symlink():
+            raise AnnotationConflictError("analysis_id is not a regular submission directory")
         if target_dir.exists():
-            shutil.rmtree(target_dir)
-        shutil.move(str(tmp_dir), str(target_dir))
+            _assert_same_submission(target_dir, metadata, tmp_dir / "image.png")
+        else:
+            try:
+                os.rename(tmp_dir, target_dir)
+            except OSError as exc:
+                if exc.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                    raise
+                _assert_same_submission(target_dir, metadata, tmp_dir / "image.png")
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
 
     except PermissionError as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -212,3 +243,25 @@ def save_annotation(
         "classes": sorted(classes_seen),
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _assert_same_submission(target_dir: Path, incoming: dict, incoming_image: Path) -> None:
+    try:
+        existing = json.loads((target_dir / "metadata.json").read_text(encoding="utf-8"))
+        old_image = target_dir / "image.png"
+        with Image.open(old_image) as probe:
+            old = probe.convert("RGB")
+            with Image.open(incoming_image) as candidate:
+                new = candidate.convert("RGB")
+                same_image = old.size == new.size and hashlib.sha256(old.tobytes()).digest() == hashlib.sha256(new.tobytes()).digest()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise AnnotationConflictError("existing submission is unreadable; refusing to replace it") from exc
+    if existing.get("submitted_by") != incoming["submitted_by"]:
+        raise AnnotationConflictError("analysis_id already belongs to another submitter")
+    def fields(metadata: dict) -> list[dict]:
+        return [
+            {key: item.get(key) for key in ("index", "class_name", "bbox", "note")}
+            for item in metadata.get("annotations", [])
+        ]
+    if not same_image or fields(existing) != fields(incoming) or existing.get("image_name") != incoming["image_name"]:
+        raise AnnotationConflictError("analysis_id already has different submitted content")

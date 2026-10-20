@@ -40,6 +40,7 @@ _RUNTIME_ARTIFACTS = {
     "runtime/weights/prototypes.pt",
 }
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+PREPROCESSING_VERSION = "runtime-lanczos-whitepad-imagenet.v1"
 _DEFAULT_LOCAL_BACKBONE_MANIFESTS = {
     "dinov2_vits14": Path(__file__).resolve().parents[1]
     / "training_corpus"
@@ -439,15 +440,20 @@ class CodexClassifier:
                    the legacy weights/ folder next to this file.
         device: torch device string (e.g. 'cpu', 'cuda', 'mps').
                 Auto-detected when None.
-        backbone_source: ``local`` (default), ``online``, or a local pin
+        backbone_manifest: audited local DINOv2 pin manifest path. When given
+                           (and ``backbone_source`` is omitted) the backbone is
+                           loaded from this pin instead of torch.hub.
+        backbone_source: ``online`` (default), ``local`` (default audited pin
+                         under training_corpus/backbone-pins), or a local pin
                          manifest path. ``CODEX_DINOV2_SOURCE`` provides the
-                         same explicit override when this argument is omitted.
+                         same explicit override when neither argument is given.
     """
 
     def __init__(
         self,
         model_dir: Optional[Union[str, Path]] = None,
         device: Optional[str] = None,
+        backbone_manifest: Optional[Union[str, Path]] = None,
         backbone_source: Optional[Union[str, Path]] = None,
     ):
         module_dir = Path(__file__).parent
@@ -476,11 +482,12 @@ class CodexClassifier:
             else:
                 device = "cpu"
         self.device = torch.device(device)
-        self._requested_backbone_source = (
-            backbone_source
-            if backbone_source is not None
-            else os.environ.get("CODEX_DINOV2_SOURCE", "local")
-        )
+        if backbone_source is not None:
+            self._requested_backbone_source = backbone_source
+        elif backbone_manifest is not None:
+            self._requested_backbone_source = backbone_manifest
+        else:
+            self._requested_backbone_source = os.environ.get("CODEX_DINOV2_SOURCE", "online")
         self._load_weights()
         if loaded_hashes != {name: _sha256_file(path) for name, path in artifact_paths.items()}:
             raise ModelPackageValidationError("classifier artifacts changed while loading")

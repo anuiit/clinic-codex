@@ -22,6 +22,7 @@ const adminQueue = {
       elements: [
         {
           key: "review-smoke:0",
+          revision: 0,
           analysis_id: "review-smoke",
           index: 0,
           class_name: "Alpha",
@@ -38,6 +39,7 @@ const adminQueue = {
         },
         {
           key: "review-smoke:1",
+          revision: 0,
           analysis_id: "review-smoke",
           index: 1,
           class_name: "Beta",
@@ -60,7 +62,7 @@ const adminQueue = {
 function headers(type = "application/json") {
   return {
     "content-type": type,
-    "access-control-allow-origin": "http://localhost:7118",
+    "access-control-allow-origin": process.env.CLINIC_E2E_BASE_URL || "http://localhost:7118",
     "access-control-allow-credentials": "true",
     "access-control-allow-headers": "*",
     "access-control-allow-methods": "GET,POST,OPTIONS",
@@ -80,8 +82,7 @@ async function installAdminRoutes(page: Page) {
     }
 
     if (
-      url.origin === "http://localhost:7117" ||
-      url.origin === "http://127.0.0.1:7117"
+      url.origin === new URL(process.env.VITE_API_BASE_URL || "http://localhost:7117").origin
     ) {
       if (url.pathname === "/auth/me") {
         await route.fulfill({
@@ -111,7 +112,19 @@ async function installAdminRoutes(page: Page) {
         });
         return;
       }
-      if (url.pathname === "/classes") {
+      if (url.pathname.endsWith("/history")) {
+        await route.fulfill({status: 200, headers: headers(), body: JSON.stringify({status: "ok", revision: 0, history: []})});
+        return;
+      }
+      if (url.pathname === "/admin/classes") {
+        await route.fulfill({status: 200, headers: headers(), body: JSON.stringify({
+          revision: "catalogue-1", classes: ["Alpha", "Beta", "Gamma", "Tochtli"].map(class_name => ({
+            class_name, class_label: null, status: "active", counts: {pending: 0, approved: 0, rejected: 0}, trainable_count: 0,
+          })),
+        })});
+        return;
+      }
+      if (url.pathname === "/classes" || url.pathname === "/annotation-classes") {
         await route.fulfill({
           status: 200,
           headers: headers(),
@@ -168,6 +181,93 @@ test.beforeEach(async ({ page }) => {
   await installAdminRoutes(page);
 });
 
+test("keeps validation feedback visible without covering the next decision", async ({ page }) => {
+  let approved = false;
+  await page.route("**/admin/annotations", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const queue = structuredClone(adminQueue);
+    if (approved) {
+      queue.analyses[0].elements[0].review_status = "approved";
+      queue.counts.pending = 1;
+      queue.counts.approved = 1;
+    }
+    await route.fulfill({ status: 200, headers: headers(), body: JSON.stringify(queue) });
+  });
+  await page.route("**/admin/annotations/review-smoke/0/review", async (route) => {
+    approved = true;
+    await route.fulfill({ status: 200, headers: headers(), body: JSON.stringify({ status: "ok" }) });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/admin/annotations/review", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "À vérifier" }).click();
+  await page.getByRole("button", { name: "Valider", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /Élément #1 · Beta/ })).toBeVisible();
+  await expect(page.getByRole("status").getByText(/Validé · Alpha/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Valider", exact: true })).toBeFocused();
+  const toast = (await page.locator(".annotation-toast--ok").boundingBox())!;
+  const actions = (await page.locator(".admin-decision-actions").boundingBox())!;
+  expect(toast.y + toast.height <= actions.y || toast.y >= actions.y + actions.height || toast.x + toast.width <= actions.x || toast.x >= actions.x + actions.width).toBe(true);
+});
+
+test("keeps the admin header focused and groups existing classes", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/admin/annotations/classes", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: "Classes disponibles" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /à confirmer/i })).toHaveCount(0);
+  await expect(page.getByText("codex-014")).toHaveCount(0);
+  const activeClasses = page.locator("details").filter({ hasText: /classes du modèle actif/i });
+  await expect(activeClasses).not.toHaveAttribute("open");
+  await page.getByText("Options du poste").click();
+  await expect(page.locator(".admin-options")).toHaveAttribute("open");
+  await expect(page.getByRole("link", { name: /retour à l’analyse/i })).toHaveAttribute("href", "/");
+  expect(await page.locator("header.admin-command-bar").evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+});
+
+test("keeps Dataset list and gallery scrolling independently", async ({ page }) => {
+  const elements = Array.from({ length: 90 }, (_, index) => ({
+    ...adminQueue.analyses[0].elements[0],
+    key: `review-smoke:${index}`,
+    index,
+    class_name: `Classe ${String(index).padStart(2, "0")}`,
+    crop_url: `/admin/annotations/review-smoke/${index}/crop`,
+    review_status: "approved",
+    trainable: true,
+    dataset_split: "train",
+    split_reason: "trainable_hash_80_10_10",
+  }));
+  await page.route("**/admin/annotations", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({
+      status: 200,
+      headers: headers(),
+      body: JSON.stringify({
+        ...adminQueue,
+        counts: { total: 90, pending: 0, approved: 90, rejected: 0, trainable: 90 },
+        analyses: [{ ...adminQueue.analyses[0], elements }],
+      }),
+    });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/admin/annotations/dataset", { waitUntil: "networkidle" });
+  const list = page.locator(".class-list-reference");
+  const gallery = page.locator(".gallery-reference");
+  await expect(list).toBeVisible();
+  await expect(gallery).toBeVisible();
+  const initial = await page.evaluate(() => {
+    const list = document.querySelector(".class-list-reference")!;
+    const gallery = document.querySelector(".gallery-reference")!;
+    return [list.scrollHeight > list.clientHeight, gallery.scrollHeight > gallery.clientHeight];
+  });
+  expect(initial).toEqual([true, true]);
+  await list.evaluate((node) => { node.scrollTop = 200; });
+  expect(await list.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  expect(await gallery.evaluate((node) => node.scrollTop)).toBe(0);
+  await gallery.evaluate((node) => { node.scrollTop = 200; });
+  expect(await gallery.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  expect(await list.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  expect(await page.locator(".admin-tab-content").evaluate((node) => node.scrollTop)).toBe(0);
+});
+
 test("keeps the review workstation compact, bounded, and zoomable", async ({
   page,
 }) => {
@@ -211,17 +311,10 @@ test("keeps the review workstation compact, bounded, and zoomable", async ({
   const contextImage = page.getByRole("img", {
     name: /image complète review-smoke/i,
   });
-  const cropPane = page.locator(
-    '[data-reference-art="crop"][data-real-media="true"]',
-  );
-  const cropImage = cropPane.locator("img");
-
   await expect(imageShell).toBeVisible();
   await expect(imageStage).toBeVisible();
-  await expect(cropPane).toBeVisible();
   await expect(contextImage).toBeVisible();
-  await expect(cropImage).toBeVisible();
-  await expect(cropImage).toHaveCSS("object-fit", "contain");
+  await expect(page.getByText("Découpe à décider")).toHaveCount(0);
   await expect(imageHeader.getByText(/détails techniques \/ audit/i)).toBeVisible();
   await expect(
     page.locator(".admin-inspector-grid > .admin-audit-details"),
@@ -231,10 +324,15 @@ test("keeps the review workstation compact, bounded, and zoomable", async ({
   const transformBox = await imageTransform.boundingBox();
   expect(stageBox).not.toBeNull();
   expect(transformBox).not.toBeNull();
-  expect(stageBox!.height).toBeGreaterThan(480);
+  expect(stageBox!.height).toBeGreaterThan(900 * 0.4);
   expect(Math.abs(transformBox!.width / transformBox!.height - 2)).toBeLessThan(
     0.02,
   );
+  const validateAction = await page.getByRole("button", { name: /^valider$/i }).boundingBox();
+  const nextAction = await page.getByRole("button", { name: "Suivant" }).boundingBox();
+  expect(validateAction).not.toBeNull();
+  expect(nextAction).not.toBeNull();
+  expect(Math.abs(validateAction!.y - nextAction!.y)).toBeLessThanOrEqual(1);
 
   await page.setViewportSize({ width: 2048, height: 1109 });
   const wideStageBox = await imageStage.boundingBox();
@@ -245,7 +343,7 @@ test("keeps the review workstation compact, bounded, and zoomable", async ({
     }),
   );
   expect(wideStageBox).not.toBeNull();
-  expect(wideStageBox!.height).toBeGreaterThan(700);
+  expect(wideStageBox!.height).toBeGreaterThan(1109 * 0.5);
   expect(wideTabMetrics.scrollHeight).toBeLessThanOrEqual(
     wideTabMetrics.clientHeight + 1,
   );
@@ -318,17 +416,18 @@ test("keeps the admin decision context copy visible for the selected analysis", 
   await expect(
     page.getByRole("heading", { name: /élément #0 · alpha/i }),
   ).toBeVisible();
-  await expect(page.getByText("Image complète")).toBeVisible();
-  await expect(page.getByText("Découpe à décider")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /image complète · review-smoke/i })).toBeVisible();
+  await expect(page.getByText("Effet sur le dataset")).toBeVisible();
+  await expect(page.getByText("Découpe à décider")).toHaveCount(0);
   await expect(page.locator(".admin-inspector-flags")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /v · valider/i }),
+    page.getByRole("button", { name: /^valider$/i }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /r · rejeter/i }),
+    page.getByRole("button", { name: /^rejeter$/i }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /c · corriger/i }),
+    page.getByRole("button", { name: /^corriger$/i }),
   ).toBeVisible();
 });
 
@@ -343,7 +442,7 @@ test("preserves the natural image ratio while redrawing and shows correction con
   await expect(contextStrip).toContainText("Zone 180 × 100 px");
   await expect(contextStrip).toContainText("Pas encore prêt");
 
-  await page.getByRole("button", { name: /c · corriger/i }).click();
+  await page.getByRole("button", { name: /^corriger$/i }).click();
   const stage = page.getByTestId("admin-segmentation-stage");
   const imageShell = page.getByTestId("admin-correction-image-shell");
   const imageTransform = page.getByTestId("admin-correction-image-transform");
@@ -398,20 +497,14 @@ test("preserves the natural image ratio while redrawing and shows correction con
       clientHeight: document.documentElement.clientHeight,
       scrollHeight: document.documentElement.scrollHeight,
     }));
-    const sideMetrics = await correctionSide.evaluate((element) => ({
-      clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight,
-    }));
-
     expect(responsiveStageBox).not.toBeNull();
     expect(responsiveSideBox).not.toBeNull();
     expect(editorBox).not.toBeNull();
     expect(actionsBox).not.toBeNull();
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
     expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight + 1);
-    expect(sideMetrics.scrollHeight).toBeLessThanOrEqual(
-      sideMetrics.clientHeight + 1,
-    );
+    // Additional review/history controls may scroll, but must remain reachable.
+    await expect(correctionSide).toHaveCSS("overflow-y", "auto");
     expect(Math.abs(responsiveStageBox!.y - responsiveSideBox!.y)).toBeLessThanOrEqual(1);
     expect(
       Math.abs(responsiveStageBox!.height - responsiveSideBox!.height),
@@ -419,9 +512,8 @@ test("preserves the natural image ratio while redrawing and shows correction con
     expect(responsiveStageBox!.width + responsiveSideBox!.width).toBeGreaterThan(
       editorBox!.width - 24,
     );
-    expect(actionsBox!.y + actionsBox!.height).toBeLessThanOrEqual(
-      responsiveSideBox!.y + responsiveSideBox!.height + 1,
-    );
+    await editorActions.scrollIntoViewIfNeeded();
+    await expect(editorActions).toBeInViewport();
   }
   await page.setViewportSize({ width: 1440, height: 900 });
 

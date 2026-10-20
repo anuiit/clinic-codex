@@ -17,6 +17,7 @@ import {
   type ImageBBoxStageBoxRenderState,
 } from "../../components/ImageBBoxStage";
 import { adminAnnotationMediaUrl } from "../../services/api";
+import { AdminMediaImage } from "./AdminMediaImage";
 import { clientToImage } from "../../utils/imageCoords";
 import {
   clampBBox,
@@ -354,7 +355,7 @@ export function AdminCorrectionStage({
       {!analysis.image_exists ? (
         <div className="ui-empty-state h-full">Image source manquante</div>
       ) : !imageSize ? (
-        <img
+        <AdminMediaImage
           src={imageUrl}
           alt={`Image à corriger ${analysis.analysis_id}`}
           className="admin-segmentation-preloader"

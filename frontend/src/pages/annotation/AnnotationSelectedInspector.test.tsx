@@ -53,8 +53,9 @@ describe('AnnotationSelectedInspector', () => {
         focusedElement={element('note b')}
       />,
     );
-    await waitFor(() => expect(textarea).toHaveValue('note b'));
-    fireEvent.blur(textarea);
+    // The note field is keyed by analysis and index, so it remounts with the new note.
+    await waitFor(() => expect(screen.getByTestId('annotation-element-note')).toHaveValue('note b'));
+    fireEvent.blur(screen.getByTestId('annotation-element-note'));
     expect(onCommitElementNote).not.toHaveBeenCalled();
   });
 });

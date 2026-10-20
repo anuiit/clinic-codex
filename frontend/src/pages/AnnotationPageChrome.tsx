@@ -11,7 +11,10 @@ type AnnotationLabels = typeof appText.annotation;
 
 type AnnotationPageChromeProps = {
   labels: AnnotationLabels;
+  analysisId?: string;
   imageName?: string | null;
+  readyCount: number;
+  totalCount: number;
   saving: boolean;
   sending: boolean;
   onSubmitNamed: () => void;
@@ -24,7 +27,10 @@ type AnnotationPageChromeProps = {
 
 export function AnnotationPageChrome({
   labels,
+  analysisId,
   imageName,
+  readyCount,
+  totalCount,
   saving,
   sending,
   onSubmitNamed,
@@ -39,7 +45,7 @@ export function AnnotationPageChrome({
       <div className="annotation-topbar flex shrink-0 flex-wrap items-center gap-2 rounded-2xl px-3 py-2 md:flex-nowrap md:justify-between">
         <div className="flex min-w-0 items-center gap-4">
           <Link
-            to="/"
+            to={analysisId ? `/?analysis=${encodeURIComponent(analysisId)}` : "/"}
             className="ui-action-ghost flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium"
           >
             <ArrowLeft size={18} /> {labels.back}
@@ -100,7 +106,8 @@ export function AnnotationPageChrome({
         data-testid="annotation-admin-notice"
         className="ui-alert ui-alert--accent shrink-0 px-3 py-1.5 text-xs"
       >
-        {labels.adminApprovalNotice}
+        <strong>{readyCount} prêt{readyCount > 1 ? "s" : ""} pour revue · {totalCount - readyCount} brouillon{totalCount - readyCount > 1 ? "s" : ""}.</strong>{" "}
+        Envoi définitif pour cette analyse. {labels.adminApprovalNotice}
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ const analysisFixture: AdminAnnotationAnalysis = {
   elements: [
     {
       key: "element-a",
+      revision: 0,
       analysis_id: "analysis-001",
       index: 1,
       class_name: "catheter",
@@ -32,6 +33,7 @@ const analysisFixture: AdminAnnotationAnalysis = {
     },
     {
       key: "element-b",
+      revision: 0,
       analysis_id: "analysis-001",
       index: 2,
       class_name: "valve",
